@@ -295,6 +295,34 @@ result_geom = tg.add_buffer_groupbyid(
 | 116.51| 39.96 | D    | 4     | id_1     | POLYGON ((116.51149 39.94829, 116.51122 39.947...) |
 
 
+### 7、将geopandas添加一列面积根据图形的area计算单位地理坐标系是米，平面与平面单位一致
+```python
+import tablegis as tg
+import geopandas as gpd
+polygon = Polygon([(113.343, 29.3434), (113.353, 29.3434), (113.353, 29.3534), (113.343, 29.3534)])
+gdf = gpd.GeoDataFrame({'id': [1], 'geometry': [polygon]}, crs="epsg:4326")
+# 测试1:添加面积列（自动选择坐标系）
+result_gdf = tg.add_area(gdf, 'area')
+print('area:',result_gdf['area'].astype(int)[0])
+
+# 测试2:添加面积列名和坐标系
+result_gdf = tg.add_area(gdf, 'area', crs_epsg=32650)
+print('area:',result_gdf['area'].astype(int)[0])
+
+```
+结果展示：  
+## 添加面积列（自动选择坐标系）
+```
+Center: (113.3480, 29.3484) → UTM Zone 49 N → EPSG:32649
+area: 1076905
+```
+
+## 添加面积列名和坐标系
+```
+area: 1078867
+```
+
+
 ## 贡献
 
 欢迎各种形式的贡献，包括功能请求、错误报告和代码贡献。

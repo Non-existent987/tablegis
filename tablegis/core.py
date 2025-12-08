@@ -566,7 +566,7 @@ def dog():
     except:
         print('播放失败')
 
-def add_area(gdf, column='面积', crs_epsg=None):
+def add_area(gdf, column='面积', crs_epsg=None, area_type='int'):
     '''把gdf新增一列'面积'单位是平方米
     临时转换成指定的投影坐标系计算面积后再转回原来的坐标系
     
@@ -574,6 +574,7 @@ def add_area(gdf, column='面积', crs_epsg=None):
         gdf: GeoDataFrame
         column: str 输出面积列名
         crs_epsg: int 可选的投影坐标系EPSG代码，默认会根据数据自动选择UTM投影，常用的有32650
+        area_type: str 可选，面积列的数据类型，默认为'int'，可选'float'
         
     返回:
         GeoDataFrame: 添加了面积列的GeoDataFrame
@@ -616,6 +617,10 @@ def add_area(gdf, column='面积', crs_epsg=None):
     
     # 转回原始坐标系
     result = gdf_projected.to_crs(original_crs)
+    if area_type == 'int':
+        result[column] = result[column].astype(int)
+    elif area_type == 'float':
+        result[column] = result[column].astype(float)
     return result
 
 

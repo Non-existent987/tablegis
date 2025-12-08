@@ -296,6 +296,34 @@ result_geom = tg.add_buffer_groupbyid(
 | 116.50| 39.95 | C    | 3     | id_1     | POLYGON ((116.51149 39.94829, 116.51122 39.947...) |
 | 116.51| 39.96 | D    | 4     | id_1     | POLYGON ((116.51149 39.94829, 116.51122 39.947...) |
 
+### 7. Add a column for area to geopandas. The area is calculated based on the shape's area. The unit of the geographic coordinate system is meters, which is consistent with the units of both the horizontal and vertical planes.
+```python
+import tablegis as tg
+import geopandas as gpd
+polygon = Polygon([(113.343, 29.3434), (113.353, 29.3434), (113.353, 29.3534), (113.343, 29.3534)])
+gdf = gpd.GeoDataFrame({'id': [1], 'geometry': [polygon]}, crs="epsg:4326")
+# Test 1: Add Area Column (Automatically Select Coordinate System)
+result_gdf = tg.add_area(gdf, 'area')
+print('area:',result_gdf['area'].astype(int)[0])
+
+# Test 2: Add column name for area and coordinate system
+result_gdf = tg.add_area(gdf, 'area', crs_epsg=32650)
+print('area:',result_gdf['area'].astype(int)[0])
+
+```
+结果展示：  
+## Add Area Column (Automatically Select Coordinate System)
+```
+Center: (113.3480, 29.3484) → UTM Zone 49 N → EPSG:32649
+area: 1076905
+```
+
+## Add column names for area and coordinate system
+```
+area: 1078867
+```
+
+
 
 ## Contributing
 
