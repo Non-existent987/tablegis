@@ -6,7 +6,8 @@ from .core import (min_distance_onetable,
                    add_buffer,
                    add_points,
                    add_buffer_groupbyid,
-                   dog)
+                   dog,
+                   add_area,)
 
 __all__ = [
     "min_distance_onetable",
@@ -16,6 +17,7 @@ __all__ = [
     'add_points',
     'add_buffer_groupbyid',
     'dog',
+    'add_area',
 ]
 def wav_file():
     import base64

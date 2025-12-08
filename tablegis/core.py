@@ -6,9 +6,11 @@ import geopandas as gpd
 from shapely.geometry import Point
 from scipy.spatial import cKDTree
 import pyproj
-from .utils import *
+# from .utils import *
+from tablegis.utils import *
 from typing import Optional
 from tablegis import __path__
+import warnings
 
 
 
@@ -563,5 +565,57 @@ def dog():
         winsound.PlaySound("{}/tmp.wav".format(__path__[0]), winsound.SND_FILENAME)
     except:
         print('播放失败')
+
+def add_area(gdf, column='面积', crs_epsg=None):
+    '''把gdf新增一列'面积'单位是平方米
+    临时转换成指定的投影坐标系计算面积后再转回原来的坐标系
+    
+    参数:
+        gdf: GeoDataFrame
+        column: str 输出面积列名
+        crs_epsg: int 可选的投影坐标系EPSG代码，默认会根据数据自动选择UTM投影，常用的有32650
+        
+    返回:
+        GeoDataFrame: 添加了面积列的GeoDataFrame
+    '''
+    # 检查输入
+    if not isinstance(gdf, gpd.GeoDataFrame):
+        raise TypeError("输入必须是GeoDataFrame类型")
+        
+    if gdf.empty:
+        warnings.warn("输入GeoDataFrame为空")
+        gdf[column] = []
+        return gdf
+        
+    # 检查几何类型
+    if not all(geom.geom_type in ['Polygon', 'MultiPolygon'] for geom in gdf.geometry):
+        raise ValueError("所有几何必须是Polygon或MultiPolygon类型以计算面积")
+    
+    # 保存原始坐标系
+    original_crs = gdf.crs
+    
+    # 如果没有指定crs_epsg，则自动计算最适合的UTM区域
+    if crs_epsg is None:
+        # 计算中心点以确定最佳 UTM zone
+        bounds = gdf.total_bounds  # minx, miny, maxx, maxy
+        center_lon = (bounds[0] + bounds[2]) / 2
+        center_lat = (bounds[1] + bounds[3]) / 2
+        
+        # 判断 UTM zone number
+        utm_zone = int((center_lon + 180) // 6) + 1
+        # 北半球 EPSG: 326XX；南半球 EPSG: 327XX
+        hemisphere = 32600 if center_lat >= 0 else 32700
+        target_crs = f"EPSG:{hemisphere + utm_zone}"
+        print(f"Center: ({center_lon:.4f}, {center_lat:.4f}) → UTM Zone {utm_zone} {'N' if center_lat>=0 else 'S'} → {target_crs}")
+    else:
+        target_crs = f"EPSG:{crs_epsg}"
+        
+    # 转换到目标坐标系并计算面积
+    gdf_projected = gdf.to_crs(target_crs)
+    gdf_projected[column] = gdf_projected.area
+    
+    # 转回原始坐标系
+    result = gdf_projected.to_crs(original_crs)
+    return result
 
 

@@ -387,6 +387,39 @@ def test_add_buffer_groupbyid():
             assert row.geometry.contains(point) or row.geometry.touches(point), \
                 f"点 {row['name']} 应该在其聚合多边形内"
     print("✓ test_add_buffer_groupbyid 所有测试通过!")
+def test_add_area():
+    """测试为GeoDataFrame添加面积列"""
+    # 创建一个多边形
+    polygon = Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
+    gdf = gpd.GeoDataFrame({'id': [1], 'geometry': [polygon]}, crs="epsg:4326")
+    
+    # 添加面积列（自动选择坐标系）
+    result_gdf = tg.add_area(gdf, 'area')
+    
+    # 验证结果
+    assert 'area' in result_gdf.columns
+    assert result_gdf['area'].iloc[0] > 0  # 面积应该为正值
+    
+    # 测试手动指定坐标系
+    result_gdf_manual = tg.add_area(gdf, 'area_manual', crs_epsg=32650)
+    assert 'area_manual' in result_gdf_manual.columns
+    assert result_gdf_manual['area_manual'].iloc[0] > 0  # 面积应该为正值
+    
+    # 测试错误处理 - 输入类型错误
+    with pytest.raises(TypeError):
+        tg.add_area(pd.DataFrame())
+        
+    # 测试错误处理 - 几何类型错误
+    point_gdf = gpd.GeoDataFrame({'geometry': [Point(0, 0)]})
+    with pytest.raises(ValueError):
+        tg.add_area(point_gdf)
+        
+    # 测试警告 - 空GeoDataFrame
+    empty_gdf = gpd.GeoDataFrame({'geometry': []})
+    with pytest.warns(UserWarning):
+        tg.add_area(empty_gdf)
+    print('成功')
+    print("✓ test_add_area 所有测试通过!")
 
 if __name__ == "__main__":
     test_min_distance_onetable()
@@ -398,3 +431,4 @@ if __name__ == "__main__":
     test_add_buffer()
     test_add_points()
     test_add_buffer_groupbyid()
+    test_add_area()
