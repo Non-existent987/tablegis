@@ -1,5 +1,9 @@
 # tablegis
 
+[![PyPI](https://img.shields.io/pypi/v/tablegis.svg)](https://pypi.org/project/tablegis/)
+[![Tests](https://github.com/Non-existent987/tablegis/actions/workflows/test.yml/badge.svg)](https://github.com/Non-existent987/tablegis/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/Non-existent987/tablegis)](https://github.com/Non-existent987/tablegis/blob/main/LICENSE)
+
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 `tablegis` is a Python package for geospatial data processing and analysis, built on `geopandas`, `pandas`, `shapely`, and `pyproj`. It provides a series of utility functions to simplify common GIS operations.
@@ -14,18 +18,19 @@
 
 ## Installation
 
-1、You can install `tablegis` from PyPI:
+1. You can install `tablegis` from PyPI:
 
 ```bash
 pip install tablegis
 ```
 
-2、Or, install the latest version directly from the GitHub repository:
+2. Or, install the latest version directly from the GitHub repository:
 
 ```bash
 pip install git+https://github.com/Non-existent987/tablegis.git
 ```
-3、After downloading the project, it is convenient to import from local files for modification.
+
+3. After downloading the project, it is convenient to import from local files for modification.
 ```bash
 import sys
 import pandas as pd
@@ -53,19 +58,21 @@ df1 = pd.DataFrame({
 })
 
 df2 = pd.DataFrame({
-    'id': ['A', 'B', 'C', 'D'],
-    'lon2': [116.403, 116.407, 116.404, 116.408],
-    'lat2': [39.914, 39.918, 39.916, 39.919]
+    'id': ['A', 'B', 'C'],
+    'lon2': [116.403, 116.407, 116.404],
+    'lat2': [39.914, 39.918, 39.916]
 })
 
-# Calculate the nearest 1 point
-result = tg.min_distance_twotable(df1, df2, lon1='lon1', lat1='lat1', lon2='lon2', lat2='lat2', df2_id='id', n=1)
-# Calculate the nearest 2 points
-result2 = tg.min_distance_twotable(df1, df2, lon1='lon1', lat1='lat1', lon2='lon2', lat2='lat2', df2_id='id', n=2)
+# Calculate the nearest points
+result = tg.min_distance_twotable(
+    df1, df2, 
+    lon1='lon1', lat1='lat1', 
+    lon2='lon2', lat2='lat2', 
+    df2_id='id', 
+    n=1
+)
 
-print("\nExample result (distance in meters):")
 print(result)
-print(result2)
 ```
 
 **Result Display:**
@@ -159,7 +166,7 @@ print(result2)
 |  1 | p2 | 114.05 | 30.05 | p1          | 114.01        | 30.01         | 5881.336911       | p3          | 114.12        | 30.12         | 10289.545038      | 8085.440974   |
 |  2 | p3 | 114.12 | 30.12 | p2          | 114.05        | 30.05         | 10289.545038      | p1          | 114.01        | 30.01         | 16170.880987      | 13230.213012  |
 
-### 3、Replace the longitude and latitude columns in the table with the corresponding values in another coordinate system, and add a new column for longitude and latitude.
+### 3. Replace the longitude and latitude columns in the table with the corresponding values in another coordinate system, and add a new column for longitude and latitude.
 ```python
 import pandas as pd
 import tablegis as tg
@@ -184,7 +191,7 @@ print(result)
 | C   | 116.404  | 39.916   | 12958034.01      | 4853743.126      |
 | D   | 116.408  | 39.919   | 12958479.28      | 4854178.552      |
 
-### 4、Generate buffers of the specified range based on the longitude and latitude columns in the table and add the geometry.
+### 4. Generate buffers of the specified range based on the longitude and latitude columns in the table and add the geometry.
 ```python
 import pandas as pd
 import tablegis as tg
@@ -223,7 +230,7 @@ print(res_buffer_size)
 | 0 | 116.4074 | 39.9042 | 500         | POLYGON ((116.41325 39.90423, 116.41322 39.903... |
 | 1 | 121.4737 | 31.2304 | 1000        | POLYGON ((121.48417 31.23003, 121.48408 31.229... |
 
-### 5、Convert the latitude and longitude columns in the table into point-shaped geometries and then transform them into a gdf.
+### 5. Convert the latitude and longitude columns in the table into point-shaped geometries and then transform them into a gdf.
 ```python
 import pandas as pd
 import tablegis as tg
@@ -246,7 +253,7 @@ print(result1)
 | 113.2644  | 23.1291    | Guangzhou | POINT (113.2644 23.1291)     |
 
 
-### 6、Concentrate the latitude and longitude data in the table using the method of expansion and recombination, and add the fused id as well as the range geom.
+### 6. Concentrate the latitude and longitude data in the table using the method of expansion and recombination, and add the fused id as well as the range geom.
 ```python
 import pandas as pd
 import tablegis as tg
@@ -300,6 +307,8 @@ result_geom = tg.add_buffer_groupbyid(
 ```python
 import tablegis as tg
 import geopandas as gpd
+from shapely.geometry import Polygon
+
 polygon = Polygon([(113.343, 29.3434), (113.353, 29.3434), (113.353, 29.3534), (113.343, 29.3534)])
 gdf = gpd.GeoDataFrame({'id': [1], 'geometry': [polygon]}, crs="epsg:4326")
 # Test 1: Add Area Column (Automatically Select Coordinate System)
@@ -309,26 +318,20 @@ print('area:',result_gdf['area'].astype(int)[0])
 # Test 2: Add column name for area and coordinate system
 result_gdf = tg.add_area(gdf, 'area', crs_epsg=32650)
 print('area:',result_gdf['area'].astype(int)[0])
-
-```
-结果展示：  
-## Add Area Column (Automatically Select Coordinate System)
-```
-Center: (113.3480, 29.3484) → UTM Zone 49 N → EPSG:32649
-area: 1076905
 ```
 
-## Add column names for area and coordinate system
-```
-area: 1078867
-```
+## Documentation
 
-
+Detailed documentation is available in the [Wiki](https://github.com/Non-existent987/tablegis/wiki).
 
 ## Contributing
 
-Contributions in all forms are welcome, including feature requests, bug reports, and code contributions.
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a history of changes to this project.
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
