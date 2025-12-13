@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Professional badges in README
 
 ### Changed
-- Updated minimum Python version requirement from 3.7 to 3.8
-- Updated GitHub Actions workflows to use currently supported Python versions
+- Updated minimum Python version requirement from 3.8 to 3.9
+- Updated GitHub Actions workflows to use currently supported Python versions (3.9, 3.10, 3.11, 3.12)
+- Updated GitHub Actions workflows to use ubuntu-20.04 runner to fix Python installation issues
 - Improved GitHub Actions workflow to allow separate publishing to TestPyPI and PyPI
 - Enhanced project metadata in pyproject.toml
 
@@ -25,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - N/A
 
 ### Removed
-- Support for Python 3.7
+- Support for Python 3.7 and 3.8
 
 ### Fixed
 - N/A
