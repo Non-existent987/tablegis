@@ -1,32 +1,13 @@
-name: Publish to TestPyPI
+name: Publish to TestPyPI (disabled)
 
+# This workflow has been disabled from automatic triggers.
+# It can be re-enabled manually if you need to run TestPyPI uploads.
 on:
-  push:
-    tags:
-      - 'test-v*'
+  workflow_dispatch: {}
 
 jobs:
-  publish:
+  disabled:
     runs-on: ubuntu-20.04
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build twine
-    
-    - name: Build package
-      run: python -m build
-    
-    - name: Publish to TestPyPI
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-      run: twine upload --repository testpypi dist/*
+      - name: Notice
+        run: echo "This TestPyPI workflow is disabled for automatic runs. Use workflow_dispatch to run manually."
