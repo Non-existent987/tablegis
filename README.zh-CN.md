@@ -323,6 +323,37 @@ area: 1078867
 ```
 
 
+
+
+### 8、根据指定的方位角、距离和角度在点周围创建扇形（楔形）多边形。
+
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+    'lon': [116.4074, 121.4737],
+    'lat': [39.9042, 31.2304],
+    'azimuth': [45, 90],
+    'distance': [1000, 1500],
+    'angle': [60, 45]
+})
+
+# 使用默认参数创建扇形
+result = tg.add_sectors(df, lon='lon', lat='lat', azimuth='azimuth', distance='distance', angle='angle')
+print(result)
+```
+
+### 9、播放内置的提示音。
+
+```python
+import tablegis as tg
+
+# 播放提示音(仅限Windows)
+tg.dog()
+```
+
+
 ## 贡献
 
 欢迎各种形式的贡献，包括功能请求、错误报告和代码贡献。

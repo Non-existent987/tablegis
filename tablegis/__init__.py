@@ -6,6 +6,7 @@ from .core import (min_distance_onetable,
                    add_buffer,
                    add_points,
                    add_buffer_groupbyid,
+                   add_sectors,
                    dog,
                    add_area,)
 
@@ -16,6 +17,7 @@ __all__ = [
     'add_buffer',
     'add_points',
     'add_buffer_groupbyid',
+    'add_sectors',
     'dog',
     'add_area',
 ]

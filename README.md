@@ -320,6 +320,34 @@ result_gdf = tg.add_area(gdf, 'area', crs_epsg=32650)
 print('area:',result_gdf['area'].astype(int)[0])
 ```
 
+### 8. Create sector (wedge) polygons around points with specified azimuth, distance, and angle.
+
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+    'lon': [116.4074, 121.4737],
+    'lat': [39.9042, 31.2304],
+    'azimuth': [45, 90],
+    'distance': [1000, 1500],
+    'angle': [60, 45]
+})
+
+# Create sectors with default parameters
+result = tg.add_sectors(df, lon='lon', lat='lat', azimuth='azimuth', distance='distance', angle='angle')
+print(result)
+```
+
+### 9. Play a built-in notification sound.
+
+```python
+import tablegis as tg
+
+# Play the notification sound (Windows only)
+tg.dog()
+```
+
 ## Documentation
 
 Detailed documentation is available in the [Wiki](https://github.com/Non-existent987/tablegis/wiki).

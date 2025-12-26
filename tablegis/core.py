@@ -359,6 +359,136 @@ def add_buffer(df, lon='lon', lat='lat',dis=None, geometry='geometry'):
     result = gdf_utm.set_geometry(geometry).to_crs("EPSG:4326")
     return result
 
+
+def add_sectors(df, lon='lon', lat='lat', azimuth='azimuth', distance='distance', angle='angle', difference_distance=None, base_arc_points=36, geometry='geometry'):
+    """Create sector (wedge) polygons around points.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame with point coordinates.
+    lon, lat : str
+        Column names for longitude and latitude.
+    azimuth : str or float
+        Column name for bearing (degrees, 0 = north clockwise) or a scalar
+        float to apply to all rows.
+    distance : str or float
+        Column name or scalar for outer radius in meters.
+    angle : str or float
+        Column name or scalar for total sector angle in degrees.
+    difference_distance : str or float, optional
+        If provided, creates a ring-sector between `difference_distance`
+        (inner radius) and `distance` (outer radius). If None, creates a
+        filled sector from the center to `distance`.
+    base_arc_points : int
+        Base number of points to use along a full 360° arc (default 36).
+    geometry : str
+        Name of the output geometry column.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        GeoDataFrame with sector polygons in EPSG:4326.
+    """
+    df = df.copy()
+    # validate lon/lat
+    if lon not in df.columns or lat not in df.columns:
+        raise ValueError(f"Missing columns: {lon}, {lat}")
+
+    # detect CRS (expects WGS84 lon/lat ranges)
+    detected_crs = detect_crs(df, lon, lat)
+
+    # prepare azimuth, distance, angle, inner radius arrays or scalars
+    def _get_array_or_scalar(col_or_val, name):
+        if isinstance(col_or_val, str):
+            if col_or_val not in df.columns:
+                raise KeyError(f"Missing column for {name}: {col_or_val}")
+            return df[col_or_val].to_numpy()
+        else:
+            return float(col_or_val)
+
+    az_arr = _get_array_or_scalar(azimuth, 'azimuth')
+    dist_arr = _get_array_or_scalar(distance, 'distance')
+    ang_arr = _get_array_or_scalar(angle, 'angle')
+    inner_arr = None if difference_distance is None else _get_array_or_scalar(difference_distance, 'difference_distance')
+
+    # project to local UTM for meter units
+    points_proj, proj_crs = create_projected_kdtree(df, lon, lat)
+    transformer = pyproj.Transformer.from_crs("EPSG:4326", proj_crs, always_xy=True)
+    lons = df[lon].to_numpy()
+    lats = df[lat].to_numpy()
+    xs, ys = transformer.transform(lons, lats)
+
+    from shapely.geometry import Polygon
+    polys = []
+
+    n = len(df)
+    for i in range(n):
+        cx = xs[i]
+        cy = ys[i]
+
+        # extract per-row or scalar parameters
+        az = az_arr[i] if isinstance(az_arr, np.ndarray) else az_arr
+        r = dist_arr[i] if isinstance(dist_arr, np.ndarray) else dist_arr
+        a = ang_arr[i] if isinstance(ang_arr, np.ndarray) else ang_arr
+        inner = None
+        if inner_arr is not None:
+            inner = inner_arr[i] if isinstance(inner_arr, np.ndarray) else inner_arr
+
+        if np.isnan(cx) or np.isnan(cy):
+            polys.append(None)
+            continue
+
+        # guard r and a
+        if r is None or np.isnan(r) or r <= 0:
+            polys.append(None)
+            continue
+        if a is None or np.isnan(a) or a <= 0:
+            polys.append(None)
+            continue
+
+        # compute start and end angles in degrees (bearing: 0=north clockwise)
+        start_deg = (az - a / 2.0) % 360
+        end_deg = (az + a / 2.0) % 360
+
+        # create linearized angle array handling wrap-around
+        if end_deg < start_deg:
+            end_deg += 360
+        angs = np.linspace(start_deg, end_deg, max(4, int(base_arc_points * (a / 360.0))))
+
+        # convert bearing (clockwise from north) to math angle measured from +x (east)
+        thetas = np.deg2rad(90.0 - angs)
+
+        # outer arc points
+        outer_pts = [(cx + r * np.cos(t), cy + r * np.sin(t)) for t in thetas]
+
+        if inner is None or inner <= 0:
+            # sector polygon: center -> outer arc -> center
+            coords = [(cx, cy)] + outer_pts + [(cx, cy)]
+            poly = Polygon(coords)
+            polys.append(poly)
+        else:
+            # build ring-sector between inner and outer radius
+            # inner arc in reverse order to form a proper ring
+            inner_thetas = thetas[::-1]
+            inner_pts = [(cx + inner * np.cos(t), cy + inner * np.sin(t)) for t in inner_thetas]
+            shell = outer_pts + inner_pts
+            try:
+                poly = Polygon(shell)
+            except Exception:
+                # fallback: create outer polygon to avoid failing
+                coords = [(cx, cy)] + outer_pts + [(cx, cy)]
+                poly = Polygon(coords)
+            polys.append(poly)
+
+    # construct GeoDataFrame, set projected CRS then convert to WGS84
+    gdf_proj = gpd.GeoDataFrame(df.copy(), geometry=polys, crs=proj_crs)
+    result = gdf_proj.set_geometry('geometry').to_crs('EPSG:4326')
+    # rename geometry column if requested
+    if geometry != 'geometry':
+        result = result.rename_geometry(geometry)
+    return result
+
 def add_points(df1, lon='lon', lat='lat', geometry='geometry',crs='epsg:4326'):
     """Convert a DataFrame with longitude/latitude columns to a GeoDataFrame
 
@@ -548,6 +678,8 @@ def add_area(gdf, column='add_area', crs_epsg=None, area_type='int'):
         result[column] = result[column].astype(int)
     elif area_type == 'float':
         result[column] = result[column].astype(float)
+    else:
+        result[column] = result[column].astype(int)
     return result
 
 

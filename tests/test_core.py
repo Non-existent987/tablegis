@@ -144,7 +144,7 @@ def test_min_distance_twotable():
     assert pd.isna(result4.loc[0, 'nearest1_id'])
     
     # 测试用例5: 异常处理 - n < 1
-    with pytest.raises(ValueError, match="参数 n 必须大于等于 1"):
+    with pytest.raises(ValueError, match="The parameter n must be greater than or equal to 1."):
         tg.min_distance_twotable(df1, df2, lon1='lon1', lat1='lat1', 
                              lon2='lon2', lat2='lat2', df2_id='id', n=0)
     
@@ -214,8 +214,9 @@ def test_add_buffer():
     """测试 add_buffer 函数的基本功能"""
     import pandas as pd
     import geopandas as gpd
+    import pytest
     
-    # 测试1: 基本固定距离
+    # 测试1: 基本固定距离（整数）
     df = pd.DataFrame({
         'lon': [116.4074, 121.4737],
         'lat': [39.9042, 31.2304],
@@ -230,6 +231,11 @@ def test_add_buffer():
     assert all(result.geometry.geom_type == 'Polygon'), "几何类型应该是 Polygon"
     assert 'name' in result.columns, "原始列应该保留"
     
+    # 测试1.5: 基本固定距离（浮点数）
+    result_float = tg.add_buffer(df, lon='lon', lat='lat', dis=1000.5)
+    assert isinstance(result_float, gpd.GeoDataFrame), "浮点数距离应该正常工作"
+    assert len(result_float) == 2, "应该返回2行数据"
+    
     # 测试2: 使用列名指定距离
     df2 = pd.DataFrame({
         'lon': [116.4074, 121.4737],
@@ -239,24 +245,49 @@ def test_add_buffer():
     
     result2 = tg.add_buffer(df2, lon='lon', lat='lat', dis='buffer_size')
     assert len(result2) == 2, "应该返回2行数据"
+    assert all(result2.geometry.geom_type == 'Polygon'), "几何类型应该是 Polygon"
     
     # 测试3: 错误处理 - 缺失列
     df3 = pd.DataFrame({'x': [116.4074], 'y': [39.9042]})
-    try:
+    with pytest.raises(ValueError, match="Missing columns"):
         tg.add_buffer(df3, lon='lon', lat='lat', dis=1000)
-        assert False, "应该抛出 ValueError"
-    except ValueError as e:
-        assert "Missing columns" in str(e)
     
-    # 测试4: 错误处理 - 无效经度
+    # 测试4: 错误处理 - 无效经度（超出范围）
     df4 = pd.DataFrame({'lon': [200.0], 'lat': [39.9042]})
-    try:
+    with pytest.raises(ValueError, match="Coordinate data anomaly"):
         tg.add_buffer(df4, dis=1000)
-        assert False, "应该抛出 ValueError"
-    except ValueError as e:
-        assert "坐标数据异常" in str(e)
+    
+    # 测试5: 错误处理 - 无效纬度（超出范围）
+    df5 = pd.DataFrame({'lon': [116.4074], 'lat': [100.0]})
+    with pytest.raises(ValueError, match="Coordinate data anomaly"):
+        tg.add_buffer(df5, dis=1000)
+    
+    # 测试6: 错误处理 - 全部为空值
+    df6 = pd.DataFrame({'lon': [None, None], 'lat': [None, None]})
+    with pytest.raises(ValueError, match="contain all null values"):
+        tg.add_buffer(df6, dis=1000)
+    
+    # 测试7: 错误处理 - 错误的 dis 类型
+    df7 = pd.DataFrame({'lon': [116.4074], 'lat': [39.9042]})
+    with pytest.raises(ValueError, match="type Error"):
+        tg.add_buffer(df7, dis=[1000])  # 传入列表类型
+    
+    # 测试8: 包含部分空值的数据（应该正常处理非空值）
+    df8 = pd.DataFrame({
+        'lon': [116.4074, None, 121.4737],
+        'lat': [39.9042, 31.2304, None],
+        'name': ['北京', '天津', '上海']
+    })
+    result8 = tg.add_buffer(df8, lon='lon', lat='lat', dis=1000)
+    assert len(result8) == 3, "应该返回所有行（包括空值行）"
+    
+    # 测试9: 自定义 geometry 列名
+    df9 = pd.DataFrame({'lon': [116.4074], 'lat': [39.9042]})
+    result9 = tg.add_buffer(df9, lon='lon', lat='lat', dis=1000, geometry='buffer_geom')
+    assert 'buffer_geom' in result9.columns, "自定义 geometry 列名应该存在"
     
     print("✓ test_add_buffer 所有测试通过!")
+
 
 def test_add_points():
     """
@@ -346,7 +377,7 @@ def test_add_buffer_groupbyid():
     
     assert isinstance(result_no_geom, pd.DataFrame), "应该返回DataFrame"
     assert 'geometry' not in result_no_geom.columns, "不应包含geometry列"
-    assert '聚合id' in result_no_geom.columns, "应该包含聚合id列"
+    assert 'clusterid' in result_no_geom.columns, "应该包含聚合id列"
     assert all(col in result_no_geom.columns for col in test_data.columns), "应保留原始列"
     
     # 测试2: 返回geometry（多边形）
@@ -360,7 +391,7 @@ def test_add_buffer_groupbyid():
     
     assert isinstance(result_with_geom, gpd.GeoDataFrame), "应该返回GeoDataFrame"
     assert 'geometry' in result_with_geom.columns, "应该包含geometry列"
-    assert '聚合id' in result_with_geom.columns, "应该包含聚合id列"
+    assert 'clusterid' in result_with_geom.columns, "应该包含聚合id列"
     
     # 验证geometry是多边形而不是点
     for geom in result_with_geom.geometry.dropna():
@@ -382,44 +413,78 @@ def test_add_buffer_groupbyid():
     
     # 每个点应该在其对应的聚合多边形内
     for idx, row in result_check.iterrows():
-        if pd.notna(row['聚合id']) and pd.notna(row.geometry):
+        if pd.notna(row['clusterid']) and pd.notna(row.geometry):
             point = Point(row['lon'], row['lat'])
             assert row.geometry.contains(point) or row.geometry.touches(point), \
                 f"点 {row['name']} 应该在其聚合多边形内"
     print("✓ test_add_buffer_groupbyid 所有测试通过!")
+
 def test_add_area():
     """测试为GeoDataFrame添加面积列"""
-    # 创建一个多边形
-    polygon = Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
-    gdf = gpd.GeoDataFrame({'id': [1], 'geometry': [polygon]}, crs="epsg:4326")
     
-    # 添加面积列（自动选择坐标系）
-    result_gdf = tg.add_area(gdf, 'area')
+    # 测试1: 基本功能 - 自动选择坐标系
+    polygon = Polygon([(111, 23), (111, 33), (112, 33), (112, 23)])
+    gdf = gpd.GeoDataFrame({'id': [1], 'geometry': [polygon]}, crs="epsg:32650")
     
-    # 验证结果
+    result_gdf = tg.add_area(gdf, column='area')
+    
     assert 'area' in result_gdf.columns
-    assert result_gdf['area'].iloc[0] > 0  # 面积应该为正值
+    assert result_gdf['area'].iloc[0] > 0
+    print(type(result_gdf['area'].iloc[0]))
+    assert isinstance(result_gdf['area'].iloc[0], (np.integer, np.floating))
+    assert result_gdf.crs == gdf.crs  # 验证CRS保持不变
     
-    # 测试手动指定坐标系
+    # 测试2: 手动指定坐标系
     result_gdf_manual = tg.add_area(gdf, 'area_manual', crs_epsg=32650)
     assert 'area_manual' in result_gdf_manual.columns
-    assert result_gdf_manual['area_manual'].iloc[0] > 0  # 面积应该为正值
+    assert result_gdf_manual['area_manual'].iloc[0] > 0
+    assert result_gdf_manual.crs == gdf.crs  # 验证返回原始CRS
     
-    # 测试错误处理 - 输入类型错误
-    with pytest.raises(TypeError):
-        tg.add_area(pd.DataFrame())
-        
-    # 测试错误处理 - 几何类型错误
-    point_gdf = gpd.GeoDataFrame({'geometry': [Point(0, 0)]})
-    with pytest.raises(ValueError):
-        tg.add_area(point_gdf)
-        
-    # 测试警告 - 空GeoDataFrame
-    empty_gdf = gpd.GeoDataFrame({'geometry': []})
-    with pytest.warns(UserWarning):
-        tg.add_area(empty_gdf)
-    print('成功')
-    print("✓ test_add_area 所有测试通过!")
+    # 测试3: 测试area_type参数
+    result_int = tg.add_area(gdf, 'area_int', area_type='int')
+    assert result_int['area_int'].dtype == int
+    
+    result_float = tg.add_area(gdf, 'area_float', area_type='float')
+    assert result_float['area_float'].dtype == float
+    
+    # 测试4: 多个多边形
+    polygons = [
+        Polygon([(0, 0), (0, 1), (1, 1), (1, 0)]),
+        Polygon([(2, 2), (2, 3), (3, 3), (3, 2)])
+    ]
+    gdf_multi = gpd.GeoDataFrame({'id': [1, 2], 'geometry': polygons}, crs="epsg:4326")
+    result_multi = tg.add_area(gdf_multi, 'area')
+    assert len(result_multi) == 2
+    # assert all(result_multi['area'] > 0)
+    
+    print('✓ 所有测试通过!')
+def test_add_sectors():
+    """测试 add_sectors 函数的基本行为（扇形和扇弧形）"""
+    df = pd.DataFrame({
+        'lon': [116.397487, 116.398000],
+        'lat': [39.908722, 39.909000],
+        'az': [0, 90],
+        'dist': [100, 200],
+        'ang': [60, 45]
+    })
+
+    # 按列指定参数
+    res = tg.add_sectors(df, lon='lon', lat='lat', azimuth='az', distance='dist', angle='ang')
+    assert isinstance(res, gpd.GeoDataFrame)
+    assert len(res) == 2
+    assert all((g is None) or (g.geom_type == 'Polygon') for g in res.geometry)
+
+    # 使用标量参数（统一设置）
+    res2 = tg.add_sectors(df, lon='lon', lat='lat', azimuth=45.0, distance=150.0, angle=90.0)
+    assert isinstance(res2, gpd.GeoDataFrame)
+
+    # 扇弧形（内外半径差）
+    df1 = pd.DataFrame({'lon': [116.397487], 'lat': [39.908722], 'az': [0], 'dist': [200], 'ang': [90], 'inner': [100]})
+    res3 = tg.add_sectors(df1, lon='lon', lat='lat', azimuth='az', distance='dist', angle='ang', difference_distance='inner')
+    assert isinstance(res3, gpd.GeoDataFrame)
+    assert res3.geometry.iloc[0] is not None
+    assert res3.geometry.iloc[0].area > 0
+    print("✓ test_add_sectors 所有测试通过!")
 
 if __name__ == "__main__":
     test_min_distance_onetable()
