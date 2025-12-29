@@ -286,9 +286,10 @@ def to_lonlat(df, lon, lat, from_crs, to_crs):
     return to_lonlat_utils(df, lon, lat, from_crs, to_crs)
 
 
-def add_buffer(df, lon='lon', lat='lat',dis=None, geometry='geometry'):
-    """Create accurate buffers in meters using an appropriate UTM projection.
-
+def add_buffer(df, lon='lon', lat='lat', dis=None, min_distance=None, geometry='geometry'):
+    """
+    Create accurate buffers in meters using an appropriate UTM projection.
+    Optimized for performance using vectorized operations.
     Parameters
     ----------
     df : DataFrame
@@ -296,8 +297,13 @@ def add_buffer(df, lon='lon', lat='lat',dis=None, geometry='geometry'):
     lon, lat : str
         Names of longitude and latitude columns.
     dis : str or number
-        If string, interpreted as a column name containing distances; if
-        numeric, treated as a fixed buffer distance in meters.
+        If string, interpreted as a column name containing outer radii; if
+        numeric, treated as a fixed outer buffer distance in meters.
+    min_distance : str or number, optional
+        If provided (string or numeric) creates a ring between `min_distance`
+        (inner radius) and `dis` (outer radius). If `None` (default) behaves
+        like a normal filled buffer. Supports column name (str) or scalar
+        numeric value. Values must be >= 0.
     geometry : str
         Name for the output geometry column.
 
@@ -306,57 +312,91 @@ def add_buffer(df, lon='lon', lat='lat',dis=None, geometry='geometry'):
     GeoDataFrame
         GeoDataFrame of buffer polygons in CRS EPSG:4326.
     """
-    df = df.copy()
-    # check that required columns exist
     if lon not in df.columns or lat not in df.columns:
         raise ValueError(f"Missing columns: {lon}, {lat}")
-    # 2. data validation
-    lon_values = df[lon].dropna()
-    lat_values = df[lat].dropna()
-    
-    # check for empty coordinate columns
-    if len(lon_values) == 0 or len(lat_values) == 0:
-        raise ValueError("The latitude and longitude columns contain all null values.")
-    # check longitude/latitude ranges
-    lon_min, lon_max = lon_values.min(), lon_values.max()
-    lat_min, lat_max = lat_values.min(), lat_values.max()
-    
-    invalid_lon = (lon_min < -180) or (lon_max > 180)
-    invalid_lat = (lat_min < -90) or (lat_max > 90)
 
-    # 3. handle invalid coordinate ranges
-    if invalid_lon or invalid_lat:
+    # Preserve original rows: create geometry only for valid rows, keep others as None
+    df_all = df.copy()
+    mask_valid = df_all[lon].notna() & df_all[lat].notna()
+    if not mask_valid.any():
+        raise ValueError("The latitude and longitude columns contain all null values.")
+
+    # Validate coordinate ranges on valid rows
+    lon_vals, lat_vals = df_all.loc[mask_valid, lon], df_all.loc[mask_valid, lat]
+    if (lon_vals.min() < -180) or (lon_vals.max() > 180) or \
+       (lat_vals.min() < -90) or (lat_vals.max() > 90):
         error_msg = f"Coordinate data anomaly:\n"
-        error_msg += f"  lon range: [{lon_min:.4f}, {lon_max:.4f}] ( -180 - 180)\n"
-        error_msg += f"  lat range: [{lat_min:.4f}, {lat_max:.4f}] ( -90 - 90)\n"
+        error_msg += f"  lon range: [{lon_vals.min():.4f}, {lon_vals.max():.4f}] ( -180 - 180)\n"
+        error_msg += f"  lat range: [{lat_vals.min():.4f}, {lat_vals.max():.4f}] ( -90 - 90)\n"
         raise ValueError(error_msg)
 
-    # compute centroid to determine best UTM zone
-    center_lon = df[lon].mean()
-    center_lat = df[lat].mean()
-    # determine UTM zone number
-    utm_zone = int((center_lon + 180) // 6) + 1
-    # Northern hemisphere -> EPSG:326XX, southern -> EPSG:327XX
-    hemisphere = 32600 if center_lat >= 0 else 32700
-    target_crs = f"EPSG:{hemisphere + utm_zone}"
-    print(f"Center: ({center_lon:.4f}, {center_lat:.4f}) → UTM Zone {utm_zone} {'N' if center_lat>=0 else 'S'} → {target_crs}")
-    # create point geometries and set original CRS
-    gdf = gpd.GeoDataFrame(
-        df,
-        geometry=gpd.points_from_xy(df[lon], df[lat]),
-        crs="EPSG:4326"
-    )
-    # transform to UTM and compute buffer (units: meters)
-    gdf_utm = gdf.to_crs(target_crs)
-    if type(dis) == str:
-        gdf_utm[geometry] = gdf_utm[[geometry, dis]].apply(lambda x: x.iloc[0].buffer(x.iloc[1]), axis=1)
-    elif type(dis) == float or type(dis) == int:
-        gdf_utm[geometry] = gdf_utm.geometry.buffer(dis)
+    # Build geometry series: Point for valid rows, None for invalid
+    geom_series = [None] * len(df_all)
+    from shapely.geometry import Point as _Point
+    for i in df_all.index[mask_valid]:
+        geom_series[i] = _Point(df_all.at[i, lon], df_all.at[i, lat])
+
+    gdf = gpd.GeoDataFrame(df_all, geometry=geom_series, crs="EPSG:4326")
+
+    # Estimate best UTM CRS (robust to edge cases)
+    try:
+        utm_crs = gdf.estimate_utm_crs()
+    except Exception as e:
+        # Fallback: use centroid-based UTM (your original logic)
+        center_lon = df[lon].mean()
+        center_lat = df[lat].mean()
+        utm_zone = int((center_lon + 180) // 6) + 1
+        hemisphere = 32600 if center_lat >= 0 else 32700
+        utm_crs = f"EPSG:{hemisphere + utm_zone}"
+        print(f"Falling back to manual UTM: {utm_crs}")
+
+    print(f"Using UTM CRS: {utm_crs}")
+    gdf_utm = gdf.to_crs(utm_crs)
+
+    # Helper: extract radius as Series (scalar or column)
+    def _resolve_radius(val, default_name):
+        if val is None:
+            return None
+        if isinstance(val, str):
+            if val not in df_all.columns:
+                raise KeyError(f"Column '{val}' not found for {default_name}")
+            series = df_all[val].astype(float)
+        else:
+            try:
+                scalar = float(val)
+            except Exception:
+                raise ValueError(f"type Error: {val}")
+            series = pd.Series([scalar] * len(df_all), index=df_all.index)
+        return series
+
+    outer_series = _resolve_radius(dis, 'dis')
+    inner_series = _resolve_radius(min_distance, 'min_distance') if min_distance is not None else pd.Series(0.0, index=df_all.index)
+
+    # Validate radii
+    if (outer_series < 0).any() or (inner_series < 0).any():
+        raise ValueError("Buffer distances must be >= 0")
+
+    if (inner_series > outer_series).any():
+        # Optional: warn or set to 0
+        print("Warning: Some inner_radius > outer_radius → resulting in empty rings.")
+        # You could clip: inner_series = inner_series.clip(upper=outer_series)
+
+    # Vectorized buffer creation only for valid rows
+    valid_idx = list(gdf[gdf.geometry.notna()].index)
+    # prepare per-row outer/inner arrays aligned to valid_idx
+    outer_vals = outer_series.loc[valid_idx].values if outer_series is not None else None
+    inner_vals = inner_series.loc[valid_idx].values if inner_series is not None else None
+
+    outer_geom = gdf_utm.geometry.buffer(outer_vals)
+    if min_distance is None or (inner_series is not None and (inner_series.loc[valid_idx] == 0).all()):
+        buffered_valid = outer_geom
     else:
-        raise ValueError(f"type Error: {dis}")
-    
-    # Return to WGS84 for easier visualization
-    result = gdf_utm.set_geometry(geometry).to_crs("EPSG:4326")
+        inner_geom = gdf_utm.geometry.buffer(inner_vals)
+        buffered_valid = outer_geom.difference(inner_geom)
+
+    # assign buffered geometries back to full GeoDataFrame
+    gdf_utm.loc[valid_idx, geometry] = buffered_valid
+    result = gdf_utm.to_crs("EPSG:4326").set_geometry(geometry)
     return result
 
 
@@ -485,6 +525,153 @@ def add_sectors(df, lon='lon', lat='lat', azimuth='azimuth', distance='distance'
     gdf_proj = gpd.GeoDataFrame(df.copy(), geometry=polys, crs=proj_crs)
     result = gdf_proj.set_geometry('geometry').to_crs('EPSG:4326')
     # rename geometry column if requested
+    if geometry != 'geometry':
+        result = result.rename_geometry(geometry)
+    return result
+
+
+def add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=None, side_length=None, angle_value=None, rotation=0.0, geometry='geometry'):
+
+    """Create regular polygons around points.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input table with lon/lat columns.
+    lon, lat : str
+        Longitude and latitude column names.
+    num_sides : int
+        Number of polygon sides (>=3).
+    radius : float, str, or None, default None
+        Radius of the polygon in projected coordinates. Can be a scalar value or
+        column name (str). Either 'radius' or 'side_length' must be provided.
+    side_length : float, str, or None, default None
+        Side length of the polygon in projected coordinates. Can be a scalar value or
+        column name (str). If provided and radius is None, radius is computed as
+        s / (2*sin(pi/n)). Either 'radius' or 'side_length' must be provided.
+    angle_value : float, str, or None, default None
+        Interior angle in degrees for polygon orientation. Can be a scalar value,
+        column name (str), or None. If None, uses exterior-mode with base rotation of 0.
+        If provided, base rotation is computed as 180 - interior_angle.
+    rotation : float or str, default 0.0
+        Additional rotation in degrees applied to all polygons. Can be a scalar value
+        or column name (str) for per-row rotation.
+    
+    geometry : str, default 'geometry'
+        Name of the geometry column in the output GeoDataFrame.
+        GeoDataFrame with polygon geometries projected to and output in EPSG:4326.
+    Raises
+    ------
+    ValueError
+        If lon or lat columns are missing, num_sides < 3, or neither radius nor
+        side_length is provided.
+    KeyError
+        If a column name is referenced but does not exist in the input DataFrame.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        GeoDataFrame with polygon geometries in EPSG:4326.
+    """
+    df = df.copy()
+    # validations
+    if lon not in df.columns or lat not in df.columns:
+        raise ValueError(f"Missing columns: {lon}, {lat}")
+    if not isinstance(num_sides, int) or num_sides < 3:
+        raise ValueError("num_sides must be an integer >= 3")
+
+    # prepare projected coords
+    points_proj, proj_crs = create_projected_kdtree(df, lon, lat)
+    transformer = pyproj.Transformer.from_crs("EPSG:4326", proj_crs, always_xy=True)
+    lons = df[lon].to_numpy()
+    lats = df[lat].to_numpy()
+    xs, ys = transformer.transform(lons, lats)
+
+    # helpers to resolve scalar or column
+    def _resolve(val, name):
+        if val is None:
+            return None
+        if isinstance(val, str):
+            if val not in df.columns:
+                raise KeyError(f"Missing column for {name}: {val}")
+            return df[val].to_numpy()
+        else:
+            return np.array([float(val)] * len(df))
+
+    radius_arr = _resolve(radius, 'radius')
+    side_arr = _resolve(side_length, 'side_length')
+
+    if radius_arr is None and side_arr is None:
+        raise ValueError("Either 'radius' or 'side_length' must be provided")
+    if radius_arr is None:
+        # compute radius from side length: R = s / (2*sin(pi/n))
+        radius_arr = side_arr / (2.0 * np.sin(np.pi / num_sides))
+
+    # angle/rotation handling:
+    # - If `angle_value` is provided -> interior-mode: interpret as interior
+    #   angle (degrees) and compute a base rotation `180 - interior_angle`.
+    # - If `angle_value` is None -> exterior-mode: base rotation is 0.
+    # - `rotation` is an overall rotation (degrees) applied in both modes.
+    if angle_value is None:
+        base_rot = np.zeros(len(df))
+    else:
+        angle_vals = _resolve(angle_value, 'angle_value')
+        base_rot = 180.0 - np.array(angle_vals, dtype=float)
+
+    # resolve rotation (scalar or column)
+    if isinstance(rotation, str):
+        if rotation not in df.columns:
+            raise KeyError(f"Missing column for rotation: {rotation}")
+        rot_vals = df[rotation].to_numpy(dtype=float)
+    else:
+        rot_vals = np.array([float(rotation)] * len(df))
+
+    rot_deg = base_rot + rot_vals
+    rot_arr = np.deg2rad(rot_deg)
+
+    # build polygons per row
+    # Vectorized polygon vertex computation to reduce per-row trig calls
+    from shapely.geometry import Polygon
+    polys = [None] * len(df)
+
+    # ensure arrays are numpy float arrays
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    radius_arr = np.asarray(radius_arr, dtype=float)
+    rot_arr = np.asarray(rot_arr, dtype=float)
+
+    # mask valid rows (finite center and positive radius)
+    valid_mask = np.isfinite(xs) & np.isfinite(ys) & np.isfinite(radius_arr) & (radius_arr > 0)
+    if valid_mask.any():
+        # base complex unit circle points for polygon vertices
+        base_angles = np.linspace(0.0, 2.0 * np.pi, num_sides, endpoint=False)
+        base_complex = np.exp(1j * base_angles)  # shape (num_sides,)
+
+        # compute rotated & scaled vertex offsets for valid rows in one shot
+        radii_valid = radius_arr[valid_mask]                 # (m,)
+        rot_valid = rot_arr[valid_mask]                      # (m,)
+        rot_exp = np.exp(1j * rot_valid)                     # (m,)
+
+        # complex_coords: shape (m, num_sides)
+        complex_coords = (radii_valid[:, None] * base_complex[None, :]) * rot_exp[:, None]
+
+        xs_valid = xs[valid_mask]
+        ys_valid = ys[valid_mask]
+
+        # build shapely polygons for each valid row
+        valid_indices = np.nonzero(valid_mask)[0]
+        for idx_row, i in enumerate(valid_indices):
+            vx = xs_valid[idx_row] + complex_coords[idx_row, :].real
+            vy = ys_valid[idx_row] + complex_coords[idx_row, :].imag
+            pts = list(zip(vx.tolist(), vy.tolist()))
+            try:
+                polys[i] = Polygon(pts)
+            except Exception:
+                polys[i] = None
+
+    gdf_proj = gpd.GeoDataFrame(df.copy(), geometry=polys, crs=proj_crs)
+    result = gdf_proj.set_geometry('geometry').to_crs('EPSG:4326')
+    # rename geometry if requested
     if geometry != 'geometry':
         result = result.rename_geometry(geometry)
     return result

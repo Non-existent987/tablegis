@@ -285,6 +285,38 @@ def test_add_buffer():
     df9 = pd.DataFrame({'lon': [116.4074], 'lat': [39.9042]})
     result9 = tg.add_buffer(df9, lon='lon', lat='lat', dis=1000, geometry='buffer_geom')
     assert 'buffer_geom' in result9.columns, "自定义 geometry 列名应该存在"
+
+    # 测试10: numeric min_distance -> 画出圆环（内外半径）
+    df_ring = pd.DataFrame({'lon': [116.4074], 'lat': [39.9042]})
+    full = tg.add_buffer(df_ring, lon='lon', lat='lat', dis=1000)
+    ring = tg.add_buffer(df_ring, lon='lon', lat='lat', dis=1000, min_distance=200)
+    assert isinstance(ring, gpd.GeoDataFrame)
+    assert ring.geometry.iloc[0].geom_type == 'Polygon'
+    assert ring.geometry.iloc[0].area > 0
+    assert ring.geometry.iloc[0].area < full.geometry.iloc[0].area
+
+    # 测试11: min_distance 支持列名
+    df_ring2 = pd.DataFrame({
+        'lon': [116.4074, 121.4737],
+        'lat': [39.9042, 31.2304],
+        'out': [1000, 500],
+        'inner': [200, 100]
+    })
+    res_ring2 = tg.add_buffer(df_ring2, lon='lon', lat='lat', dis='out', min_distance='inner')
+    assert len(res_ring2) == 2
+    assert all(res_ring2.geometry.geom_type == 'Polygon')
+
+    # 测试12: min_distance 等于 0 时等价于普通 buffer
+    ring0 = tg.add_buffer(df_ring, lon='lon', lat='lat', dis=1000, min_distance=0)
+    assert np.isclose(ring0.geometry.iloc[0].area, full.geometry.iloc[0].area)
+
+    # 测试13: 错误处理 - 无效 min_distance 类型
+    with pytest.raises(ValueError, match="type Error"):
+        tg.add_buffer(df7, dis=1000, min_distance=[100])  # 传入列表类型
+
+    # 测试14: 错误处理 - 指定的 min_distance 列不存在
+    with pytest.raises(KeyError):
+        tg.add_buffer(df2, lon='lon', lat='lat', dis='buffer_size', min_distance='noexist')
     
     print("✓ test_add_buffer 所有测试通过!")
 
@@ -485,6 +517,39 @@ def test_add_sectors():
     assert res3.geometry.iloc[0] is not None
     assert res3.geometry.iloc[0].area > 0
     print("✓ test_add_sectors 所有测试通过!")
+
+
+def test_add_polygon():
+    """测试 add_polygon 的基本功能与参数校验"""
+    import pandas as pd
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+    import pytest
+
+    # 基本正方形测试（使用 radius）
+    df = pd.DataFrame({'lon': [116.397487], 'lat': [39.908722]})
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=100)
+    assert isinstance(res, gpd.GeoDataFrame)
+    assert len(res) == 1
+    assert isinstance(res.geometry.iloc[0], Polygon)
+    assert res.geometry.iloc[0].area > 0
+
+    # 使用 side_length 计算半径
+    df2 = pd.DataFrame({'lon': [116.397487, 116.4], 'lat': [39.908722, 39.909]})
+    res2 = tg.add_polygon(df2, lon='lon', lat='lat', num_sides=6, side_length=50)
+    assert len(res2) == 2
+    assert all(g is None or g.geom_type == 'Polygon' for g in res2.geometry)
+
+    # 错误：边数不足
+    with pytest.raises(ValueError):
+        tg.add_polygon(df, num_sides=2, radius=10)
+
+    # 错误：缺少列
+    df3 = pd.DataFrame({'x': [1], 'y': [2]})
+    with pytest.raises(ValueError):
+        tg.add_polygon(df3, lon='lon', lat='lat', num_sides=3, radius=10)
+
+    print("✓ test_add_polygon 所有测试通过!")
 
 if __name__ == "__main__":
     test_min_distance_onetable()

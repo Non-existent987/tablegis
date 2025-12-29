@@ -198,6 +198,32 @@ print(res_100)
 print(res_buffer_size)
 ```
 结果展示：  
+> 新增：`add_buffer` 现支持 `min_distance` 参数，可传入标量或列名，用于生成圆环（内半径=`min_distance`，外半径=`dis`）。当 `min_distance=None`（默认）时保持原有实心缓冲区行为。
+
+### 多边形
+
+- `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., angle_value=None, rotation=0.0, geometry='geometry')`
+
+    新增 `add_polygon`，用于生成规则多边形。参数说明：
+    - `radius` / `side_length`：二选一，支持标量或列名（单位：米，基于投影坐标）。
+    - `angle_value`：可选；若提供则解释为每个顶点的“内角”（度），函数进入内角模式；若为 `None`（默认）则为外角/常规模式。
+    - `rotation`：整体旋转角（度），对内外角模式均适用，支持标量或列名实现按行旋转。
+    - `geometry`：输出几何列名。
+
+    说明：`add_polygon` 对顶点计算做了向量化优化以减少大量行的三角运算开销；`angle_value` 与 `rotation` 均支持传入列名以实现按行差异化配置。
+
+    示例（生成旋转 10° 的六边形）：
+
+    ```python
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=6, radius=500, rotation=10.0)
+    ```
+
+    示例（按行内角和旋转列）：
+
+    ```python
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=5, radius='r_col', angle_value='inner_deg', rotation='rot_deg')
+    ```
+
 ## df表格
 
 |   | lon      | lat     | buffer_size |

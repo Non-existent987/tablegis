@@ -1,7 +1,6 @@
 # tablegis
 
 [![PyPI](https://img.shields.io/pypi/v/tablegis.svg)](https://pypi.org/project/tablegis/)
-[![Tests](https://github.com/Non-existent987/tablegis/actions/workflows/test.yml/badge.svg)](https://github.com/Non-existent987/tablegis/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/Non-existent987/tablegis)](https://github.com/Non-existent987/tablegis/blob/main/LICENSE)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
@@ -208,6 +207,31 @@ res_buffer_size = tg.add_buffer(df,'lon','lat','buffer_size')
 print(res_100)
 print(res_buffer_size)
 ```
+Addition: `add_buffer` now supports a `min_distance` parameter. Pass a scalar or a column name to create a ring (inner radius = `min_distance`, outer radius = `dis`). If `min_distance` is `None` (default) the function creates a filled buffer as before.
+
+### Polygons
+- `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., angle_value=None, rotation=0.0, geometry='geometry')`
+
+    新增 `add_polygon`，生成规则多边形。参数说明：
+    - `radius` / `side_length`：二选一，支持标量或列名（米，投影坐标下）。
+    - `angle_value`：可选，若提供则被解释为“内角”（度），函数进入内角模式；若为 `None`（默认）则为外角/常规模式。
+    - `rotation`：整体旋转角（度），对内角/外角两种模式均适用，支持标量或列名。
+    - `geometry`：输出几何列名。
+
+    说明：`add_polygon` 对顶点计算做了向量化优化以减少大量行的三角运算开销；`angle_value` 与 `rotation` 均支持按行传入列名以实现每行不同的角度配置。
+
+    示例（生成旋转 10° 的六边形）：
+
+    ```python
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=6, radius=500, rotation=10.0)
+    ```
+
+    示例（按行内角和旋转列）：
+
+    ```python
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=5, radius='r_col', angle_value='inner_deg', rotation='rot_deg')
+    ```
+
 **Result Display:**
 ## df table
 

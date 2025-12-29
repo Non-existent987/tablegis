@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `add_polygon`: new function to generate regular polygons by `radius` or `side_length`. Vectorized vertex computation for better performance on large datasets.
+- Documentation updates for `add_buffer.min_distance` and `add_polygon`.
+
+### Changed
+- `add_polygon` API: `angle_value` is now interpreted as an *interior angle* when provided (entering interior-mode). A new `rotation` parameter (scalar or column) was added for overall orientation; when `angle_value=None` the function operates in exterior/regular mode. Both `angle_value` and `rotation` support scalar or per-row column inputs.
+
+### Packaging
+- Added guidance to README for preparing releases to PyPI and GitHub (include `pyproject.toml` metadata, build wheel and sdist, tag GitHub release).
+### Added
+- `add_buffer`: new optional `min_distance` parameter to create ring buffers (supports scalar or column name). When omitted, behavior unchanged.
 
 ## [0.0.7] - 2025-12-14
 
