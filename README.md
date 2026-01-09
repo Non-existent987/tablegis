@@ -210,15 +210,15 @@ print(res_buffer_size)
 Addition: `add_buffer` now supports a `min_distance` parameter. Pass a scalar or a column name to create a ring (inner radius = `min_distance`, outer radius = `dis`). If `min_distance` is `None` (default) the function creates a filled buffer as before.
 
 ### Polygons
-- `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., angle_value=None, rotation=0.0, geometry='geometry')`
+ - `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., interior_angle=None, rotation=0.0, geometry='geometry')`
 
     新增 `add_polygon`，生成规则多边形。参数说明：
     - `radius` / `side_length`：二选一，支持标量或列名（米，投影坐标下）。
-    - `angle_value`：可选，若提供则被解释为“内角”（度），函数进入内角模式；若为 `None`（默认）则为外角/常规模式。
-    - `rotation`：整体旋转角（度），对内角/外角两种模式均适用，支持标量或列名。
+    - `interior_angle`：可选，若提供则被解释为“内角”（度），函数进入内角模式（可生成星形）；若为 `None`（默认）则为外角/常规模式。
+    - `rotation`：整体旋转角（度，顺时针为正），对内外角两种模式均适用，支持标量或列名。
     - `geometry`：输出几何列名。
 
-    说明：`add_polygon` 对顶点计算做了向量化优化以减少大量行的三角运算开销；`angle_value` 与 `rotation` 均支持按行传入列名以实现每行不同的角度配置。
+    说明：`add_polygon` 对顶点计算做了向量化优化以减少大量行的三角运算开销；`interior_angle` 与 `rotation` 均支持按行传入列名以实现每行不同的角度配置。
 
     示例（生成旋转 10° 的六边形）：
 
@@ -229,7 +229,7 @@ Addition: `add_buffer` now supports a `min_distance` parameter. Pass a scalar or
     示例（按行内角和旋转列）：
 
     ```python
-    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=5, radius='r_col', angle_value='inner_deg', rotation='rot_deg')
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=5, radius='r_col', interior_angle='inner_deg', rotation='rot_deg')
     ```
 
 **Result Display:**
@@ -370,6 +370,43 @@ import tablegis as tg
 
 # Play the notification sound (Windows only)
 tg.dog()
+```
+
+### 10. Match spatial layer attributes to DataFrame
+Match attributes from a spatial layer (GeoDataFrame or file) to a DataFrame based on spatial relationship.
+
+```python
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Polygon
+import tablegis as tg
+
+# Data to be matched
+df = pd.DataFrame({'lon': [116.4], 'lat': [39.9]})
+
+# Spatial layer (e.g., administrative districts)
+poly = Polygon([(116.0, 39.0), (117.0, 39.0), (117.0, 40.0), (116.0, 40.0)])
+gdf_layer = gpd.GeoDataFrame({'name': ['Beijing'], 'code': [100]}, geometry=[poly], crs="EPSG:4326")
+
+# Match 'name' from layer to df
+res = tg.match_layer(df, gdf_layer, columns=['name'])
+print(res)
+```
+
+### 11. Convert DataFrame with WKT to GeoDataFrame
+Convert a DataFrame containing WKT (Well-Known Text) geometry strings into a GeoDataFrame.
+
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+    'id': [1, 2],
+    'wkt': ['POINT (116.4 39.9)', 'POINT (121.5 31.2)']
+})
+
+gdf = tg.df_to_gdf(df, geometry='wkt')
+print(gdf)
 ```
 
 ## Documentation

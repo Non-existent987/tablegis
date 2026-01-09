@@ -9,7 +9,9 @@ from .core import (min_distance_onetable,
                    add_buffer_groupbyid,
                    add_sectors,
                    dog,
-                   add_area,)
+                   add_area,
+                   match_layer,
+                   df_to_gdf,)
 
 __all__ = [
     "min_distance_onetable",
@@ -22,6 +24,8 @@ __all__ = [
     'add_sectors',
     'dog',
     'add_area',
+    'match_layer',
+    'df_to_gdf',
 ]
 def wav_file():
     import base64

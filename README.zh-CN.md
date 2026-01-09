@@ -202,11 +202,11 @@ print(res_buffer_size)
 
 ### 多边形
 
-- `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., angle_value=None, rotation=0.0, geometry='geometry')`
+- `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., interior_angle=None, rotation=0.0, geometry='geometry')`
 
     新增 `add_polygon`，用于生成规则多边形。参数说明：
     - `radius` / `side_length`：二选一，支持标量或列名（单位：米，基于投影坐标）。
-    - `angle_value`：可选；若提供则解释为每个顶点的“内角”（度），函数进入内角模式；若为 `None`（默认）则为外角/常规模式。
+    - `interior_angle`：可选；若提供则解释为每个顶点的“内角”（度），函数进入内角模式（可生成星形）；若为 `None`（默认）则为外角/常规模式。
     - `rotation`：整体旋转角（度），对内外角模式均适用，支持标量或列名实现按行旋转。
     - `geometry`：输出几何列名。
 
@@ -221,7 +221,7 @@ print(res_buffer_size)
     示例（按行内角和旋转列）：
 
     ```python
-    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=5, radius='r_col', angle_value='inner_deg', rotation='rot_deg')
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=5, radius='r_col', interior_angle='inner_deg', rotation='rot_deg')
     ```
 
 ## df表格
@@ -377,6 +377,43 @@ import tablegis as tg
 
 # 播放提示音(仅限Windows)
 tg.dog()
+```
+
+### 10、将空间图层属性匹配到DataFrame
+基于空间关系（如相交、包含）将空间图层（GeoDataFrame或文件）的属性匹配到DataFrame。
+
+```python
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Polygon
+import tablegis as tg
+
+# 待匹配的数据
+df = pd.DataFrame({'lon': [116.4], 'lat': [39.9]})
+
+# 空间图层（例如行政区划）
+poly = Polygon([(116.0, 39.0), (117.0, 39.0), (117.0, 40.0), (116.0, 40.0)])
+gdf_layer = gpd.GeoDataFrame({'name': ['Beijing'], 'code': [100]}, geometry=[poly], crs="EPSG:4326")
+
+# 将图层的'name'列匹配到df
+res = tg.match_layer(df, gdf_layer, columns=['name'])
+print(res)
+```
+
+### 11、将包含WKT的DataFrame转换为GeoDataFrame
+将包含WKT（Well-Known Text）几何字符串的DataFrame转换为GeoDataFrame。
+
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+    'id': [1, 2],
+    'wkt': ['POINT (116.4 39.9)', 'POINT (121.5 31.2)']
+})
+
+gdf = tg.df_to_gdf(df, geometry='wkt')
+print(gdf)
 ```
 
 

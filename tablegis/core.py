@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point
+from shapely import wkt
 from scipy.spatial import cKDTree
 import pyproj
 # from .utils import *
@@ -530,7 +531,7 @@ def add_sectors(df, lon='lon', lat='lat', azimuth='azimuth', distance='distance'
     return result
 
 
-def add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=None, side_length=None, angle_value=None, rotation=0.0, geometry='geometry'):
+def add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=None, side_length=None, interior_angle=None, rotation=0.0, geometry='geometry'):
 
     """Create regular polygons around points.
 
@@ -549,10 +550,11 @@ def add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=None, side_length=
         Side length of the polygon in projected coordinates. Can be a scalar value or
         column name (str). If provided and radius is None, radius is computed as
         s / (2*sin(pi/n)). Either 'radius' or 'side_length' must be provided.
-    angle_value : float, str, or None, default None
-        Interior angle in degrees for polygon orientation. Can be a scalar value,
-        column name (str), or None. If None, uses exterior-mode with base rotation of 0.
-        If provided, base rotation is computed as 180 - interior_angle.
+    interior_angle : float, str, or None, default None
+        Interior angle in degrees for interior-mode (star/concave polygons).
+        Can be a scalar value or column name (str). If `None` the function
+        operates in exterior/regular mode. When provided, an inner radius is
+        computed so the outer vertex apex has the specified interior angle.
     rotation : float or str, default 0.0
         Additional rotation in degrees applied to all polygons. Can be a scalar value
         or column name (str) for per-row rotation.
@@ -603,20 +605,28 @@ def add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=None, side_length=
 
     if radius_arr is None and side_arr is None:
         raise ValueError("Either 'radius' or 'side_length' must be provided")
+    if radius_arr is not None and side_arr is not None:
+        raise ValueError("Provide only one of 'radius' or 'side_length' (set the other to None)")
     if radius_arr is None:
         # compute radius from side length: R = s / (2*sin(pi/n))
         radius_arr = side_arr / (2.0 * np.sin(np.pi / num_sides))
 
-    # angle/rotation handling:
-    # - If `angle_value` is provided -> interior-mode: interpret as interior
-    #   angle (degrees) and compute a base rotation `180 - interior_angle`.
-    # - If `angle_value` is None -> exterior-mode: base rotation is 0.
-    # - `rotation` is an overall rotation (degrees) applied in both modes.
-    if angle_value is None:
+    # angle/rotation handling and default orientation:
+    # - If `interior_angle` is provided -> interior-mode (star): compute an
+    #   inner radius so the outer apex angle equals interior_angle.
+    # - If `interior_angle` is None -> exterior/regular mode.
+    # - `rotation` is an overall rotation (degrees) applied after a
+    #   parity-based orientation offset (odd: vertex at north; even: top edge
+    #   horizontal).
+    if interior_angle is None:
+        interior_arr = None
+        # interior_angle affects shape (inner radius) only; no extra base rotation
         base_rot = np.zeros(len(df))
     else:
-        angle_vals = _resolve(angle_value, 'angle_value')
-        base_rot = 180.0 - np.array(angle_vals, dtype=float)
+        interior_arr = _resolve(interior_angle, 'interior_angle')
+        # For interior (star) mode, apply a default half-step rotation so an
+        # outer vertex points to the top. Example: pentagram -> 360/5/2 = 36°.
+        base_rot = np.full(len(df), 360.0 / float(num_sides) / 2.0)
 
     # resolve rotation (scalar or column)
     if isinstance(rotation, str):
@@ -626,8 +636,15 @@ def add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=None, side_length=
     else:
         rot_vals = np.array([float(rotation)] * len(df))
 
-    rot_deg = base_rot + rot_vals
-    rot_arr = np.deg2rad(rot_deg)
+    # orientation baseline: vertex-up for odd n, flat-top for even n
+    if num_sides % 2 == 1:
+        orientation_base = 90.0
+    else:
+        orientation_base = 90.0 - 180.0 / float(num_sides)
+    rot_deg = orientation_base + base_rot + rot_vals
+    # user expects `rotation` to be clockwise degrees; convert to radians
+    # math positive rotation is CCW, so negate to get clockwise rotation
+    rot_arr = -np.deg2rad(rot_deg)
 
     # build polygons per row
     # Vectorized polygon vertex computation to reduce per-row trig calls
@@ -643,31 +660,79 @@ def add_polygon(df, lon='lon', lat='lat', num_sides=4, radius=None, side_length=
     # mask valid rows (finite center and positive radius)
     valid_mask = np.isfinite(xs) & np.isfinite(ys) & np.isfinite(radius_arr) & (radius_arr > 0)
     if valid_mask.any():
-        # base complex unit circle points for polygon vertices
-        base_angles = np.linspace(0.0, 2.0 * np.pi, num_sides, endpoint=False)
-        base_complex = np.exp(1j * base_angles)  # shape (num_sides,)
-
-        # compute rotated & scaled vertex offsets for valid rows in one shot
-        radii_valid = radius_arr[valid_mask]                 # (m,)
-        rot_valid = rot_arr[valid_mask]                      # (m,)
-        rot_exp = np.exp(1j * rot_valid)                     # (m,)
-
-        # complex_coords: shape (m, num_sides)
-        complex_coords = (radii_valid[:, None] * base_complex[None, :]) * rot_exp[:, None]
-
         xs_valid = xs[valid_mask]
         ys_valid = ys[valid_mask]
+        radii_valid = radius_arr[valid_mask]
+        rot_valid = rot_arr[valid_mask]
+        rot_exp = np.exp(1j * rot_valid)
 
-        # build shapely polygons for each valid row
         valid_indices = np.nonzero(valid_mask)[0]
+
+        # handle exterior (regular) rows: num_sides vertices at radius R
+        exterior_mask = (interior_arr is None)
+        if interior_arr is not None:
+            interior_arr_np = np.asarray(interior_arr, dtype=float)
+        else:
+            interior_arr_np = None
+
+        # For rows where interior_angle is provided, build 2*num_sides vertices
+        # alternating between outer radius R and computed inner radius r.
+        base_angles_exterior = np.linspace(0.0, 2.0 * np.pi, num_sides, endpoint=False)
+        base_complex_exterior = np.exp(1j * base_angles_exterior)
+
+        base_angles_star = np.linspace(0.0, 2.0 * np.pi, 2 * num_sides, endpoint=False)
+        base_complex_star = np.exp(1j * base_angles_star)
+
         for idx_row, i in enumerate(valid_indices):
-            vx = xs_valid[idx_row] + complex_coords[idx_row, :].real
-            vy = ys_valid[idx_row] + complex_coords[idx_row, :].imag
-            pts = list(zip(vx.tolist(), vy.tolist()))
-            try:
-                polys[i] = Polygon(pts)
-            except Exception:
-                polys[i] = None
+            R = float(radii_valid[idx_row])
+            rx = xs_valid[idx_row]
+            ry = ys_valid[idx_row]
+            rot_factor = rot_exp[idx_row]
+
+            if interior_arr_np is None or np.isnan(interior_arr_np[i]):
+                # exterior regular polygon
+                complex_coords = (R * base_complex_exterior) * rot_factor
+                vx = rx + complex_coords.real
+                vy = ry + complex_coords.imag
+                pts = list(zip(vx.tolist(), vy.tolist()))
+                try:
+                    polys[i] = Polygon(pts)
+                except Exception:
+                    polys[i] = None
+            else:
+                # interior (star-like) polygon: compute inner radius r per formula
+                alpha_deg = float(interior_arr_np[i])
+                phi = np.pi / float(num_sides)
+                C = np.cos(phi)
+                D = np.cos(2.0 * phi)
+                A = np.cos(np.deg2rad(alpha_deg))
+
+                a = (A - D)
+                b = 2.0 * R * C * (1.0 - A)
+                c = (A - 1.0) * (R * R)
+
+                disc = b * b - 4.0 * a * c
+                if disc < 0:
+                    # numeric safety: skip invalid
+                    polys[i] = None
+                    continue
+                r_inner = (-b + np.sqrt(disc)) / (2.0 * a)
+                if r_inner <= 0 or not np.isfinite(r_inner):
+                    polys[i] = None
+                    continue
+
+                radii_seq = np.empty(2 * num_sides, dtype=float)
+                radii_seq[::2] = R
+                radii_seq[1::2] = r_inner
+
+                complex_coords = (radii_seq[None, :] * base_complex_star[None, :])[0] * rot_factor
+                vx = rx + complex_coords.real
+                vy = ry + complex_coords.imag
+                pts = list(zip(vx.tolist(), vy.tolist()))
+                try:
+                    polys[i] = Polygon(pts)
+                except Exception:
+                    polys[i] = None
 
     gdf_proj = gpd.GeoDataFrame(df.copy(), geometry=polys, crs=proj_crs)
     result = gdf_proj.set_geometry('geometry').to_crs('EPSG:4326')
@@ -868,5 +933,177 @@ def add_area(gdf, column='add_area', crs_epsg=None, area_type='int'):
     else:
         result[column] = result[column].astype(int)
     return result
+
+
+def match_layer(df, layer, lon='lon', lat='lat', columns=None, default_value=None, match_method='one', sep=',', predicate='intersects'):
+    """Match points in a DataFrame to a spatial layer (e.g., polygons) and add attributes.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input table with longitude and latitude.
+    layer : str or geopandas.GeoDataFrame
+        Path to spatial file (shp, geojson, etc.) or a GeoDataFrame.
+    lon, lat : str
+        Column names for coordinates in `df`.
+    columns : str or list of str, optional
+        Columns from the layer to add to `df`. If None, adds all columns (excluding geometry).
+    default_value : scalar, optional
+        Value to fill if no match is found.
+    match_method : {'one', 'multi_cell', 'multi_row'}, default 'one'
+        How to handle multiple matches for a single point:
+        - 'one': Keep only one match (the first one found).
+        - 'multi_cell': Combine values from multiple matches into a single string separated by `sep`.
+        - 'multi_row': Expand the row for each match (explode).
+    sep : str, default ','
+        Separator used when match_method is 'multi_cell'.
+    predicate : str, default 'intersects'
+        Spatial predicate to use for the join (e.g., 'intersects', 'within').
+
+    Returns
+    -------
+    pandas.DataFrame
+        Input DataFrame with added columns from the matched layer.
+    """
+    if df.empty:
+        return df
+
+    if lon not in df.columns or lat not in df.columns:
+        raise ValueError(f"Columns {lon} and {lat} not found in DataFrame")
+
+    # Prepare layer
+    if isinstance(layer, str):
+        # Handle file paths
+        import os
+        if not os.path.exists(layer):
+            raise FileNotFoundError(f"Layer file not found: {layer}")
+        layer_gdf = gpd.read_file(layer)
+    elif isinstance(layer, gpd.GeoDataFrame):
+        layer_gdf = layer.copy()
+    else:
+        raise TypeError("layer must be a file path or GeoDataFrame")
+
+    # Standardize CRS to EPSG:4326 for matching
+    if layer_gdf.crs is None:
+         warnings.warn("Layer has no CRS, assuming EPSG:4326")
+         layer_gdf.set_crs("EPSG:4326", inplace=True)
+    elif layer_gdf.crs != "EPSG:4326":
+        layer_gdf = layer_gdf.to_crs("EPSG:4326")
+
+    # Determine columns to add
+    geom_col = layer_gdf.geometry.name
+    available_cols = [c for c in layer_gdf.columns if c != geom_col]
+    if columns is None:
+        target_cols = available_cols
+    else:
+        if isinstance(columns, str):
+            columns = [columns]
+        target_cols = columns
+        # Check availability
+        missing = [c for c in target_cols if c not in layer_gdf.columns]
+        if missing:
+            raise KeyError(f"Columns not found in layer: {missing}")
+
+    # Keep only necessary columns in layer (plus geometry)
+    layer_gdf = layer_gdf[target_cols + [geom_col]]
+
+    # Prepare points
+    temp_id = '___temp_id___'
+    df_temp = df.copy()
+    df_temp[temp_id] = range(len(df_temp))
+    
+    # Use existing add_points function
+    points_gdf = add_points(df_temp, lon, lat)
+
+    # Spatial Join
+    try:
+        joined = gpd.sjoin(points_gdf, layer_gdf, how='left', predicate=predicate)
+    except Exception as e:
+        raise RuntimeError(f"Spatial join failed: {e}")
+
+    # Process results
+    if match_method == 'one':
+        # Drop duplicates, keeping first match
+        result_joined = joined.drop_duplicates(subset=[temp_id])
+        # Drop helper columns
+        drop_cols = ['geometry', 'index_right', temp_id]
+        result_joined = result_joined.drop(columns=[c for c in drop_cols if c in result_joined.columns])
+        result = result_joined
+        
+    elif match_method == 'multi_row':
+        # Expand rows
+        result_joined = joined
+        drop_cols = ['geometry', 'index_right', temp_id]
+        result_joined = result_joined.drop(columns=[c for c in drop_cols if c in result_joined.columns])
+        result = result_joined
+
+    elif match_method == 'multi_cell':
+        # Aggregate
+        def agg_func(x):
+            # Filter NaNs and convert to string
+            valid = [str(v) for v in x if pd.notna(v)]
+            # Unique values
+            unique = sorted(list(set(valid)))
+            if not unique:
+                return np.nan
+            return sep.join(unique)
+
+        agg_dict = {col: agg_func for col in target_cols}
+        
+        # Group by temp_id
+        grouped = joined.groupby(temp_id)[target_cols].agg(agg_dict).reset_index()
+        
+        # Merge back to original df (via df_temp which has temp_id)
+        result = df_temp.merge(grouped, on=temp_id, how='left')
+        result = result.drop(columns=[temp_id])
+        
+    else:
+        raise ValueError(f"Invalid match_method: {match_method}. Must be 'one', 'multi_cell', or 'multi_row'.")
+
+    # Handle default value for NaNs in target columns
+    if default_value is not None:
+        for col in target_cols:
+            if col in result.columns:
+                result[col] = result[col].fillna(default_value)
+
+    return result
+
+
+def df_to_gdf(df, geometry='geometry', crs="epsg:4326"): 
+    """Convert a DataFrame with a WKT geometry column to a GeoDataFrame.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input DataFrame containing a column with WKT strings.
+    geometry : str, default 'geometry'
+        Name of the column containing WKT geometries.
+    crs : str, default 'epsg:4326'
+        Coordinate reference system to assign to the GeoDataFrame.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        GeoDataFrame with parsed geometries. The geometry column will be renamed to 'geometry'.
+    """
+    if df.empty:
+        return gpd.GeoDataFrame(df, geometry=geometry, crs=crs)
+
+    if geometry not in df.columns:
+        raise KeyError(f"Column '{geometry}' not found in DataFrame")
+
+    df_copy = df.copy()
+    try:
+        df_copy[geometry] = df_copy[geometry].apply(wkt.loads)
+    except Exception as e:
+        raise ValueError(f"Failed to parse WKT in column '{geometry}': {e}")
+        
+    gdf = gpd.GeoDataFrame(df_copy, crs=crs, geometry=geometry)
+    
+    # Rename geometry column to 'geometry' if it has a different name
+    if geometry != 'geometry':
+        gdf = gdf.rename_geometry('geometry')
+        
+    return gdf
 
 

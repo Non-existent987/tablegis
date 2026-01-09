@@ -549,7 +549,133 @@ def test_add_polygon():
     with pytest.raises(ValueError):
         tg.add_polygon(df3, lon='lon', lat='lat', num_sides=3, radius=10)
 
+    # 用户示例：五角星（内角模式）
+    df_star = pd.DataFrame({'lon': [116.397487], 'lat': [39.908722]})
+    res_star = tg.add_polygon(df_star, lon='lon', lat='lat', num_sides=5, radius=400, side_length=None, interior_angle=20, rotation=0)
+    assert isinstance(res_star, gpd.GeoDataFrame)
+    assert isinstance(res_star.geometry.iloc[0], Polygon)
+    assert res_star.geometry.iloc[0].area > 0
+
+    # 用户示例：正六边形（外角模式，按边长）
+    df_hex = pd.DataFrame({'lon': [116.397487], 'lat': [39.908722]})
+    res_hex = tg.add_polygon(df_hex, lon='lon', lat='lat', num_sides=6, radius=None, side_length=400, interior_angle=None, rotation=0)
+    assert isinstance(res_hex, gpd.GeoDataFrame)
+    assert isinstance(res_hex.geometry.iloc[0], Polygon)
+    assert res_hex.geometry.iloc[0].area > 0
+
     print("✓ test_add_polygon 所有测试通过!")
+
+def test_match_layer():
+    """测试 match_layer 功能"""
+    # Create dummy layer
+    p1 = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]) # Square at 0,0 - 1,1
+    p2 = Polygon([(0.5, 0.5), (1.5, 0.5), (1.5, 1.5), (0.5, 1.5)]) # Square overlapping p1
+    
+    layer_df = gpd.GeoDataFrame({
+        'id': [1, 2],
+        'name': ['A', 'B'],
+        'geometry': [p1, p2]
+    }, crs="EPSG:4326")
+    
+    # Create dummy points
+    df = pd.DataFrame({
+        'lon': [0.2, 0.6, 1.2, 2.0],
+        'lat': [0.2, 0.6, 1.2, 2.0],
+        'val': [10, 20, 30, 40]
+    })
+    
+    # Test 1: Match 'one' (default)
+    res_one = tg.match_layer(df, layer_df, columns=['name'])
+    assert len(res_one) == 4
+    assert res_one.iloc[0]['name'] == 'A'
+    assert res_one.iloc[2]['name'] == 'B'
+    assert pd.isna(res_one.iloc[3]['name'])
+    
+    # Test 2: Match 'multi_cell'
+    res_multi = tg.match_layer(df, layer_df, columns=['name'], match_method='multi_cell', sep=';')
+    val = res_multi.iloc[1]['name']
+    assert val == 'A;B' or val == 'B;A'
+    
+    # Test 3: Match 'multi_row'
+    res_row = tg.match_layer(df, layer_df, columns=['name'], match_method='multi_row')
+    # Point 2 matches 2 polygons, others match 1 or 0.
+    # Total rows: 1 (pt1) + 2 (pt2) + 1 (pt3) + 1 (pt4) = 5 rows.
+    assert len(res_row) == 5
+    
+    # Test 4: Default value
+    res_default = tg.match_layer(df, layer_df, columns=['name'], default_value='None')
+    assert res_default.iloc[3]['name'] == 'None'
+    print("✓ test_match_layer 所有测试通过!")
+
+def test_df_to_gdf():
+    """测试 df_to_gdf 功能"""
+    from shapely import wkt
+    
+    # 构造含WKT的DataFrame
+    df = pd.DataFrame({
+        'id': [1, 2],
+        'wkt_geom': ['POINT(116.4 39.9)', 'POINT(121.5 31.2)']
+    })
+    
+    # 正常转换
+    gdf = tg.df_to_gdf(df, geometry='wkt_geom')
+    
+    assert isinstance(gdf, gpd.GeoDataFrame)
+    assert gdf.crs == "EPSG:4326"
+    assert len(gdf) == 2
+    assert isinstance(gdf.geometry.iloc[0], Point)
+    assert gdf.geometry.iloc[0].x == 116.4
+    
+    # 错误：列不存在
+    with pytest.raises(KeyError):
+        tg.df_to_gdf(df, geometry='missing_col')
+        
+    # 错误：WKT格式错误
+    df_bad = pd.DataFrame({'geom': ['NOT A WKT']})
+    with pytest.raises(ValueError):
+        tg.df_to_gdf(df_bad, geometry='geom')
+        
+    print("✓ test_df_to_gdf 所有测试通过!")
+
+def test_match_layer_custom_geometry():
+    """测试 match_layer 处理非标准 geometry 列名"""
+    p1 = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    layer_df = gpd.GeoDataFrame({
+        'id': [1],
+        'val': ['A'],
+        'geometry': [p1]
+    }, crs="EPSG:4326")
+    
+    # 重命名 geometry 列
+    layer_df = layer_df.rename_geometry('custom_geom')
+    
+    df = pd.DataFrame({'lon': [0.5], 'lat': [0.5]})
+    
+    # 应该能正常运行，不会因为找不到 'geometry' 列报错
+    res = tg.match_layer(df, layer_df, columns=['val'])
+    assert res.iloc[0]['val'] == 'A'
+    print("✓ test_match_layer_custom_geometry 所有测试通过!")
+
+def test_df_to_gdf_new_features():
+    """测试 df_to_gdf 的新特性：crs 参数和列重命名"""
+    df = pd.DataFrame({
+        'wkt_col': ['POINT(116.4 39.9)']
+    })
+    
+    # 测试自定义 CRS 和列重命名
+    # 输入列名是 'wkt_col'，输出应该是 'geometry'
+    gdf = tg.df_to_gdf(df, geometry='wkt_col', crs="EPSG:3857")
+    
+    assert isinstance(gdf, gpd.GeoDataFrame)
+    assert gdf.crs == "EPSG:3857"
+    assert 'geometry' in gdf.columns
+    assert gdf.geometry.name == 'geometry'
+    # 确认原来的列名不再作为 geometry
+    if 'wkt_col' in gdf.columns:
+        # 如果原始列还保留（df_copy），它不再是 geometry 列
+        assert gdf.geometry.name != 'wkt_col'
+        
+    print("✓ test_df_to_gdf_new_features 所有测试通过!")
 
 if __name__ == "__main__":
     test_min_distance_onetable()
@@ -562,3 +688,9 @@ if __name__ == "__main__":
     test_add_points()
     test_add_buffer_groupbyid()
     test_add_area()
+    test_add_sectors()
+    test_add_polygon()
+    test_match_layer()
+    test_df_to_gdf()
+    test_match_layer_custom_geometry()
+    test_df_to_gdf_new_features()
