@@ -200,6 +200,46 @@ print(res_buffer_size)
 结果展示：  
 > 新增：`add_buffer` 现支持 `min_distance` 参数，可传入标量或列名，用于生成圆环（内半径=`min_distance`，外半径=`dis`）。当 `min_distance=None`（默认）时保持原有实心缓冲区行为。
 
+### 4a、对现有 GeoDataFrame 的 geometry 进行扩大或缩小缓冲
+
+```python
+import geopandas as gpd
+from shapely.geometry import Point, Polygon
+import tablegis as tg
+
+# 创建包含点 geometry 的 GeoDataFrame
+gdf_point = gpd.GeoDataFrame(
+    {'id': [1, 2]},
+    geometry=[Point(116.4074, 39.9042), Point(121.4737, 31.2304)],
+    crs='EPSG:4326'
+)
+
+# 扩大 100 米的缓冲区
+gdf_expanded = tg.buffer(gdf_point, 100)
+print(gdf_expanded)
+
+# 缩小 50 米的缓冲区（使用负值）
+gdf_shrunk = tg.buffer(gdf_point, -50)
+print(gdf_shrunk)
+
+# 用于多边形 geometry
+polygon = Polygon([(116.3, 39.8), (116.5, 39.8), (116.5, 40.0), (116.3, 40.0)])
+gdf_poly = gpd.GeoDataFrame(
+    {'id': [1]},
+    geometry=[polygon],
+    crs='EPSG:4326'
+)
+gdf_poly_expanded = tg.buffer(gdf_poly, 200)
+print(gdf_poly_expanded)
+```
+
+**核心特性：**
+- 自动投影到 UTM 以确保基于米的精确计算
+- 支持正值（扩大）和负值（缩小）距离
+- 保留原始 CRS 在输出中
+- 处理多部分 geometry
+- 如果输入 GeoDataFrame 没有 CRS，会发出警告（假设为 EPSG:4326）
+
 ### 多边形
 
 - `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., interior_angle=None, rotation=0.0, geometry='geometry')`

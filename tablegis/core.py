@@ -317,7 +317,7 @@ def add_buffer(df, lon='lon', lat='lat', dis=None, min_distance=None, geometry='
         raise ValueError(f"Missing columns: {lon}, {lat}")
 
     # Preserve original rows: create geometry only for valid rows, keep others as None
-    df_all = df.copy()
+    df_all = df.copy().reset_index(drop=True)
     mask_valid = df_all[lon].notna() & df_all[lat].notna()
     if not mask_valid.any():
         raise ValueError("The latitude and longitude columns contain all null values.")
@@ -334,8 +334,9 @@ def add_buffer(df, lon='lon', lat='lat', dis=None, min_distance=None, geometry='
     # Build geometry series: Point for valid rows, None for invalid
     geom_series = [None] * len(df_all)
     from shapely.geometry import Point as _Point
-    for i in df_all.index[mask_valid]:
-        geom_series[i] = _Point(df_all.at[i, lon], df_all.at[i, lat])
+    valid_positions = df_all.index[mask_valid]
+    for pos in valid_positions:
+        geom_series[pos] = _Point(df_all.at[pos, lon], df_all.at[pos, lat])
 
     gdf = gpd.GeoDataFrame(df_all, geometry=geom_series, crs="EPSG:4326")
 
@@ -1105,5 +1106,100 @@ def df_to_gdf(df, geometry='geometry', crs="epsg:4326"):
         gdf = gdf.rename_geometry('geometry')
         
     return gdf
+
+
+def buffer(gdf, distance, geometry_col='geometry'):
+    """Expand or shrink existing geometries by a buffer distance in meters.
+    
+    This function takes a GeoDataFrame with existing geometries, projects them
+    to an appropriate UTM zone, applies a buffer, and projects back to the
+    original CRS. All buffer operations are performed in projected coordinates
+    (UTM) to ensure accurate meter-based distances.
+
+    Parameters
+    ----------
+    gdf : geopandas.GeoDataFrame
+        Input GeoDataFrame with geometries to buffer.
+    distance : float or int
+        Buffer distance in meters. Positive values expand geometries,
+        negative values shrink geometries (inner buffer).
+    geometry_col : str, default 'geometry'
+        Name of the geometry column to buffer.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        GeoDataFrame with buffered geometries in the original CRS.
+
+    Raises
+    ------
+    ValueError
+        If input GeoDataFrame is empty.
+    KeyError
+        If geometry_col does not exist in the GeoDataFrame.
+
+    Examples
+    --------
+    >>> import geopandas as gpd
+    >>> import pandas as pd
+    >>> from shapely.geometry import Point
+    >>> import tablegis as tg
+    
+    >>> # Create a simple GeoDataFrame with points
+    >>> gdf = gpd.GeoDataFrame(
+    ...     {'id': [1, 2]},
+    ...     geometry=[Point(0, 0), Point(1, 1)],
+    ...     crs='EPSG:4326'
+    ... )
+    
+    >>> # Expand buffer by 100 meters
+    >>> gdf_expanded = tg.buffer(gdf, 100)
+    
+    >>> # Shrink buffer by 50 meters
+    >>> gdf_shrunk = tg.buffer(gdf, -50)
+    
+    Notes
+    -----
+    - Buffer distance is specified in meters regardless of the input CRS.
+    - For geographic CRS (e.g., EPSG:4326), coordinates are automatically
+      projected to the appropriate UTM zone for accurate calculations.
+    - If a GeoDataFrame has no CRS, it is assumed to be EPSG:4326.
+    """
+    if gdf.empty:
+        raise ValueError("Input GeoDataFrame is empty")
+    
+    if geometry_col not in gdf.columns:
+        raise KeyError(f"Geometry column '{geometry_col}' not found")
+    
+    # Preserve original CRS
+    original_crs = gdf.crs
+    if original_crs is None:
+        warnings.warn("GeoDataFrame has no CRS, assuming EPSG:4326")
+        original_crs = "EPSG:4326"
+        gdf = gdf.set_crs(original_crs)
+    
+    # Estimate best UTM CRS
+    try:
+        utm_crs = gdf.estimate_utm_crs()
+    except Exception as e:
+        # Fallback: use centroid-based UTM
+        bounds = gdf.total_bounds  # minx, miny, maxx, maxy
+        center_lon = (bounds[0] + bounds[2]) / 2
+        center_lat = (bounds[1] + bounds[3]) / 2
+        utm_zone = int((center_lon + 180) // 6) + 1
+        hemisphere = 32600 if center_lat >= 0 else 32700
+        utm_crs = f"EPSG:{hemisphere + utm_zone}"
+        print(f"Fallback UTM CRS: {utm_crs}")
+    
+    # Project to UTM for meter-based buffer
+    gdf_utm = gdf.to_crs(utm_crs)
+    
+    # Apply buffer
+    gdf_utm[geometry_col] = gdf_utm[geometry_col].buffer(distance)
+    
+    # Project back to original CRS
+    result = gdf_utm.to_crs(original_crs)
+    
+    return result
 
 

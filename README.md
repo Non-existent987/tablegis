@@ -209,6 +209,46 @@ print(res_buffer_size)
 ```
 Addition: `add_buffer` now supports a `min_distance` parameter. Pass a scalar or a column name to create a ring (inner radius = `min_distance`, outer radius = `dis`). If `min_distance` is `None` (default) the function creates a filled buffer as before.
 
+### 4a. Expand or shrink existing GeoDataFrame geometries by a buffer distance
+
+```python
+import geopandas as gpd
+from shapely.geometry import Point, Polygon
+import tablegis as tg
+
+# Create a GeoDataFrame with point geometries
+gdf_point = gpd.GeoDataFrame(
+    {'id': [1, 2]},
+    geometry=[Point(116.4074, 39.9042), Point(121.4737, 31.2304)],
+    crs='EPSG:4326'
+)
+
+# Expand buffer by 100 meters
+gdf_expanded = tg.buffer(gdf_point, 100)
+print(gdf_expanded)
+
+# Shrink buffer by 50 meters (negative value)
+gdf_shrunk = tg.buffer(gdf_point, -50)
+print(gdf_shrunk)
+
+# Use with polygon geometries
+polygon = Polygon([(116.3, 39.8), (116.5, 39.8), (116.5, 40.0), (116.3, 40.0)])
+gdf_poly = gpd.GeoDataFrame(
+    {'id': [1]},
+    geometry=[polygon],
+    crs='EPSG:4326'
+)
+gdf_poly_expanded = tg.buffer(gdf_poly, 200)
+print(gdf_poly_expanded)
+```
+
+**Key Features:**
+- Automatically projects to UTM for accurate meter-based calculations
+- Supports both positive (expand) and negative (shrink) distances
+- Preserves original CRS in output
+- Handles multi-part geometries
+- Warns if input GeoDataFrame has no CRS (assumes EPSG:4326)
+
 ### Polygons
  - `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., interior_angle=None, rotation=0.0, geometry='geometry')`
 

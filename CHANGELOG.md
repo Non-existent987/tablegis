@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `buffer`: New function to expand/shrink existing GeoDataFrame geometries by a distance in meters. Automatically projects to UTM for accurate meter-based operations, supporting both positive (expand) and negative (shrink) distances.
 - `match_layer`: Match spatial layer attributes to a DataFrame based on spatial relationship (intersects/contains/within). Supports multiple matches handling (first/merge/explode) and dynamic geometry column detection.
 - `df_to_gdf`: Convert a DataFrame with WKT geometry column to a GeoDataFrame. Supports custom CRS and automatically renames the geometry column to 'geometry'.
 - `add_polygon`: new function to generate regular polygons by `radius` or `side_length`. Vectorized vertex computation for better performance on large datasets.

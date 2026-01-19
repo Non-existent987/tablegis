@@ -280,6 +280,12 @@ def test_add_buffer():
     })
     result8 = tg.add_buffer(df8, lon='lon', lat='lat', dis=1000)
     assert len(result8) == 3, "应该返回所有行（包括空值行）"
+
+    # 测试8.5: 经过过滤后索引不连续的情况（例如用户筛选出索引为 7,8,9 的数据）
+    df_idx = df.copy()
+    df_idx.index = [7, 8]
+    result_idx = tg.add_buffer(df_idx, lon='lon', lat='lat', dis=1000)
+    assert len(result_idx) == 2, "索引不连续时也应该正常工作"
     
     # 测试9: 自定义 geometry 列名
     df9 = pd.DataFrame({'lon': [116.4074], 'lat': [39.9042]})
@@ -677,6 +683,79 @@ def test_df_to_gdf_new_features():
         
     print("✓ test_df_to_gdf_new_features 所有测试通过!")
 
+def test_buffer():
+    """测试 buffer 函数 - 为现有 GeoDataFrame 的 geometry 进行缓冲"""
+    
+    # 测试用例1: 基本功能 - 扩大缓冲区
+    point = Point(116.4, 39.9)
+    gdf = gpd.GeoDataFrame({'id': [1]}, geometry=[point], crs='EPSG:4326')
+    
+    # 扩大 100 米
+    gdf_expanded = tg.buffer(gdf, 100)
+    
+    # 验证返回值是 GeoDataFrame
+    assert isinstance(gdf_expanded, gpd.GeoDataFrame)
+    
+    # 验证 CRS 未改变
+    assert gdf_expanded.crs == 'EPSG:4326'
+    
+    # 验证几何体类型变为 Polygon
+    assert gdf_expanded.geometry[0].geom_type == 'Polygon'
+    
+    # 验证缓冲后的面积大于原始点
+    assert gdf_expanded.geometry[0].area > 0
+    
+    # 测试用例2: 多个几何体
+    gdf_multi = gpd.GeoDataFrame(
+        {'id': [1, 2]},
+        geometry=[Point(116.4, 39.9), Point(116.5, 39.95)],
+        crs='EPSG:4326'
+    )
+    
+    gdf_multi_expanded = tg.buffer(gdf_multi, 50)
+    assert len(gdf_multi_expanded) == 2
+    assert all(geom.geom_type == 'Polygon' for geom in gdf_multi_expanded.geometry)
+    
+    # 测试用例3: 缩小缓冲区（负值）
+    polygon = Polygon([(116.3, 39.8), (116.5, 39.8), (116.5, 40.0), (116.3, 40.0)])
+    gdf_poly = gpd.GeoDataFrame({'id': [1]}, geometry=[polygon], crs='EPSG:4326')
+    
+    # 缩小 100 米
+    gdf_shrunk = tg.buffer(gdf_poly, -100)
+    assert isinstance(gdf_shrunk, gpd.GeoDataFrame)
+    
+    # 测试用例4: 自定义 geometry 列名
+    gdf_custom = gpd.GeoDataFrame(
+        {'id': [1], 'custom_geom': [Point(116.4, 39.9)]},
+        geometry='custom_geom',
+        crs='EPSG:4326'
+    )
+    
+    gdf_custom_expanded = tg.buffer(gdf_custom, 100, geometry_col='custom_geom')
+    assert 'custom_geom' in gdf_custom_expanded.columns
+    
+    # 测试用例5: 异常处理 - 空 GeoDataFrame
+    gdf_empty = gpd.GeoDataFrame(geometry=[], crs='EPSG:4326')
+    with pytest.raises(ValueError, match="Input GeoDataFrame is empty"):
+        tg.buffer(gdf_empty, 100)
+    
+    # 测试用例6: 异常处理 - geometry 列不存在
+    gdf_no_geom = gpd.GeoDataFrame({'id': [1]})
+    with pytest.raises(KeyError, match="Geometry column"):
+        tg.buffer(gdf_no_geom, 100)
+    
+    # 测试用例7: 异常处理 - 无 CRS 的 GeoDataFrame 会发出警告，但仍能处理
+    gdf_no_crs = gpd.GeoDataFrame(
+        {'id': [1]},
+        geometry=[Point(0, 0)]
+    )
+    # 应该给出警告但不抛出异常
+    with pytest.warns(UserWarning, match="has no CRS"):
+        gdf_buffered = tg.buffer(gdf_no_crs, 100)
+    assert isinstance(gdf_buffered, gpd.GeoDataFrame)
+    
+    print("✓ test_buffer 所有测试通过!")
+
 if __name__ == "__main__":
     test_min_distance_onetable()
     test_min_distance_twotable()
@@ -694,3 +773,4 @@ if __name__ == "__main__":
     test_df_to_gdf()
     test_match_layer_custom_geometry()
     test_df_to_gdf_new_features()
+    test_buffer()
