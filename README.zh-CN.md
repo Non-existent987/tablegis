@@ -461,6 +461,8 @@ print(gdf)
 
 读取大型Excel文件（数百MB、数百万行）比 `pandas.read_excel` 快 10-50 倍。底层使用 Polars + Calamine（Rust引擎）解析，首次读取后自动缓存为 Parquet 列式格式，后续加载接近瞬时完成。**指定sheet时只转换该sheet，不会转换其他sheet**。
 
+#### 基本用法
+
 ```python
 import tablegis as tg
 
@@ -476,23 +478,108 @@ df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市", "经度"
 # 返回 pandas DataFrame（与 tablegis 其他函数衔接）
 pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
 
-# 读取全部sheet
+# 读取全部sheet（返回字典: {sheet名: DataFrame}）
 data = tg.fast_read("data.xlsx")
 
-# 读取CSV
+# 读取CSV（Polars原生读取，本身就够快，不需要缓存）
 df = tg.fast_read("data.csv")
 
 # 源文件更新后，强制刷新缓存
 df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)
 ```
 
-**性能对比**（290万行、10个sheet、321MB Excel文件）：
+#### 实战场景
 
-| 方法 | 单sheet（14.7万行） | 全量（290万行） |
-|------|---------------------|----------------|
-| `pandas.read_excel` | 244秒 | ~40分钟 |
-| `tg.fast_read`（首次） | ~5秒 | ~2.5分钟 |
-| `tg.fast_read`（缓存） | **0.02秒** | **0.12秒** |
+**场景1：通信规划 — 从多sheet工作簿中只读一个sheet**
+
+```python
+import tablegis as tg
+
+# 321MB的规划工作簿，10个sheet — 只读你需要的那个
+stations = tg.fast_read("5g_planning_2024.xlsx", sheet="站点规划")
+print(f"已加载 {len(stations):,} 条站点数据（毫秒级）")
+
+# 与 tablegis 其他函数衔接
+pd_stations = tg.fast_read("5g_planning_2024.xlsx", sheet="站点规划", to_pandas=True)
+buffers = tg.add_buffer(pd_stations, lon="经度", lat="纬度", dis=500)
+```
+
+**场景2：大文件只加载需要的列**
+
+```python
+# 只加载需要的列 — 省内存、省时间
+df = tg.fast_read("huge_data.xlsx", sheet="orders", columns=["order_id", "city", "amount"])
+print(df.head())
+
+# CSV也支持列选择
+df = tg.fast_read("transactions.csv", columns=["date", "revenue"])
+```
+
+**场景3：读取全部sheet并逐个处理**
+
+```python
+# 一次读取全部sheet（首次转换全部，后续走缓存）
+all_data = tg.fast_read("report.xlsx")
+
+for sheet_name, df in all_data.items():
+    print(f"Sheet '{sheet_name}': {len(df):,} 行 × {len(df.columns)} 列")
+
+# 需要pandas格式时，转换特定sheet
+pd_df = all_data["边界信息"].to_pandas()
+```
+
+**场景4：数据管道 — 源文件更新后刷新缓存**
+
+```python
+# 首次读取（创建缓存）
+df = tg.fast_read("live_data.xlsx", sheet="metrics")
+
+# ... 外部程序更新了源文件 ...
+
+# 强制刷新，读取最新数据
+df = tg.fast_read("live_data.xlsx", sheet="metrics", refresh=True)
+```
+
+#### 核心特性
+
+| 特性 | 说明 |
+|------|------|
+| **Rust引擎解析** | Calamine引擎读Excel比openpyxl快10-50倍 |
+| **自动Parquet缓存** | 首次读取转存到 `.parquet_cache/`；后续加载毫秒级完成 |
+| **Sheet隔离转换** | 指定 `sheet="X"` 只转换X，其他sheet不会被碰 |
+| **智能类型推断** | 自动识别数字字符串并转为Float64/Int64（混合列5%容错） |
+| **MD5校验自动失效** | 源文件变化通过MD5检测，缓存自动重建 |
+| **列裁剪** | `columns` 参数支持从Parquet中按需加载列 |
+| **Polars或pandas** | 默认返回Polars（更快），`to_pandas=True` 返回pandas |
+| **CSV支持** | CSV由Polars原生读取，速度足够快，无需缓存 |
+
+#### 缓存管理
+
+缓存文件存储在工作目录下的 `.parquet_cache/<文件名>/` 中。每个sheet生成一个 `<sheet名>.parquet` 文件，以及一个 `_meta.json` 用于跟踪MD5和行数。
+
+```python
+# 读取 "data.xlsx" 的 "站点信息" sheet后，缓存目录结构：
+# .parquet_cache/
+#   data/
+#     站点信息.parquet    # 该sheet的列式缓存
+#     _meta.json          # {md5: "...", sheets: {"站点信息": 147000}}
+```
+
+清除缓存只需删除 `.parquet_cache` 目录：
+
+```bash
+rm -rf .parquet_cache
+```
+
+#### 性能对比
+
+测试文件：290万行、10个sheet、321MB Excel文件。
+
+| 方法 | 单sheet（14.7万行） | 全量（290万行） | 内存占用 |
+|------|---------------------|----------------|----------|
+| `pandas.read_excel` | 244秒 | ~40分钟 | 238MB（单sheet） |
+| `tg.fast_read`（首次） | ~5秒 | ~2.5分钟 | — |
+| `tg.fast_read`（缓存） | **0.02秒** | **0.12秒** | 82MB（全量） |
 
 
 ## 贡献

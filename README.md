@@ -454,6 +454,8 @@ print(gdf)
 
 Read large Excel files (hundreds of MB, millions of rows) 10-50x faster than `pandas.read_excel`. Uses Polars + Calamine (Rust engine) for parsing, and automatically caches to Parquet for near-instant subsequent reads. **Only converts the sheet you need** — other sheets are not touched.
 
+#### Basic Usage
+
 ```python
 import tablegis as tg
 
@@ -469,23 +471,108 @@ df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市", "经度"
 # Return pandas DataFrame (compatible with other tablegis functions)
 pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
 
-# Read all sheets
+# Read all sheets (returns a dict: {sheet_name: DataFrame})
 data = tg.fast_read("data.xlsx")
 
-# Read CSV
+# Read CSV (no caching needed — Polars reads CSV natively and fast)
 df = tg.fast_read("data.csv")
 
 # Force refresh cache (after source file is updated)
 df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)
 ```
 
-**Performance comparison** (290M rows, 10 sheets, 321MB Excel file):
+#### Real-World Scenarios
 
-| Method | Single sheet (147K rows) | All sheets (2.9M rows) |
-|--------|-------------------------|------------------------|
-| `pandas.read_excel` | 244s | ~40min |
-| `tg.fast_read` (first time) | ~5s | ~2.5min |
-| `tg.fast_read` (cached) | **0.02s** | **0.12s** |
+**Scenario 1: Telecom planning — read a specific sheet from a multi-sheet workbook**
+
+```python
+import tablegis as tg
+
+# A 321MB planning workbook with 10 sheets — only read the one you need
+stations = tg.fast_read("5g_planning_2024.xlsx", sheet="站点规划")
+print(f"Loaded {len(stations):,} stations in milliseconds")
+
+# Chain with other tablegis functions
+pd_stations = tg.fast_read("5g_planning_2024.xlsx", sheet="站点规划", to_pandas=True)
+buffers = tg.add_buffer(pd_stations, lon="经度", lat="纬度", dis=500)
+```
+
+**Scenario 2: Selective column loading for large datasets**
+
+```python
+# Only load the columns you need — saves memory and time
+df = tg.fast_read("huge_data.xlsx", sheet="orders", columns=["order_id", "city", "amount"])
+print(df.head())
+
+# Works with CSV too
+df = tg.fast_read("transactions.csv", columns=["date", "revenue"])
+```
+
+**Scenario 3: Read all sheets and iterate**
+
+```python
+# Read all sheets at once (first time converts all, cached after)
+all_data = tg.fast_read("report.xlsx")
+
+for sheet_name, df in all_data.items():
+    print(f"Sheet '{sheet_name}': {len(df):,} rows × {len(df.columns)} columns")
+
+# Convert a specific sheet to pandas for tablegis compatibility
+pd_df = all_data["边界信息"].to_pandas()
+```
+
+**Scenario 4: Data pipeline — refresh after source update**
+
+```python
+# Initial read (creates cache)
+df = tg.fast_read("live_data.xlsx", sheet="metrics")
+
+# ... source file gets updated externally ...
+
+# Force refresh to pick up changes
+df = tg.fast_read("live_data.xlsx", sheet="metrics", refresh=True)
+```
+
+#### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Rust-powered parsing** | Calamine engine reads Excel 10-50x faster than openpyxl |
+| **Automatic Parquet cache** | First read converts to `.parquet_cache/`; subsequent reads load in milliseconds |
+| **Sheet-isolated conversion** | Specifying `sheet="X"` only converts sheet X — other sheets are never touched |
+| **Smart type casting** | Numeric strings auto-detected and cast to Float64/Int64 (with 5% tolerance for mixed columns) |
+| **MD5-based invalidation** | Source file changes are detected via MD5; cache is automatically rebuilt |
+| **Column pruning** | `columns` parameter enables lazy column loading from Parquet |
+| **Polars or pandas** | Return Polars (default, faster) or pandas (`to_pandas=True`) DataFrame |
+| **CSV support** | CSV files read natively by Polars — fast enough that no caching is needed |
+
+#### Cache Management
+
+Cache files are stored in `.parquet_cache/<filename>/` relative to your working directory. Each sheet becomes a `<sheet_name>.parquet` file, plus a `_meta.json` for tracking MD5 and row counts.
+
+```python
+# Cache directory structure after reading "data.xlsx" sheet "站点信息":
+# .parquet_cache/
+#   data/
+#     站点信息.parquet    # columnar cache for this sheet
+#     _meta.json          # {md5: "...", sheets: {"站点信息": 147000}}
+```
+
+To clear the cache, simply delete the `.parquet_cache` directory:
+
+```bash
+rm -rf .parquet_cache
+```
+
+#### Performance Comparison
+
+Test file: 290M rows, 10 sheets, 321MB Excel file.
+
+| Method | Single sheet (147K rows) | All sheets (2.9M rows) | Memory |
+|--------|-------------------------|------------------------|--------|
+| `pandas.read_excel` | 244s | ~40min | 238MB (single sheet) |
+| `tg.fast_read` (first time) | ~5s | ~2.5min | — |
+| `tg.fast_read` (cached) | **0.02s** | **0.12s** | 82MB (all sheets) |
 
 ## Documentation
 
