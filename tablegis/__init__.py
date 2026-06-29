@@ -13,6 +13,7 @@ from .core import (min_distance_onetable,
                    match_layer,
                    df_to_gdf,
                    buffer,)
+from .fast_read import fast_read
 
 __all__ = [
     "min_distance_onetable",

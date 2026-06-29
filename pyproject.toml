@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tablegis"
-version = "0.0.14"
+version = "0.0.15"
 keywords = [
-    "gis", "tablegeo", "pandas", "geopandas", 
-    "shapefile", "Nearest", "crs"
+    "gis", "tablegeo", "pandas", "geopandas",
+    "shapefile", "Nearest", "crs", "fast-read", "polars", "parquet"
 ]
 description = "A powerful Python library for geospatial data processing, analysis and conversion - integrating pandas with GIS operations"
 readme = "README_pypi.md"
@@ -36,6 +36,9 @@ dependencies = [
     "pyproj",
     "geopandas",
     "shapely",
+    "polars",
+    "python-calamine",
+    "fastexcel",
 ]
 
 [project.optional-dependencies]
