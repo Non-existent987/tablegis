@@ -14,6 +14,7 @@
 *   **Format Conversion**: Easily convert between `GeoDataFrame` and formats like `Shapefile`, `KML`, etc.
 *   **Coordinate Aggregation**: Provides tools for aggregating coordinate points into grids.
 *   **Geometric Operations**: Includes merging polygons, calculating centroids, adding sectors, etc.
+*   **Fast Table Reading**: Read large Excel/CSV files 10-50x faster with Polars + Parquet caching.
 
 ## Installation
 
@@ -448,6 +449,43 @@ df = pd.DataFrame({
 gdf = tg.df_to_gdf(df, geometry='wkt')
 print(gdf)
 ```
+
+### 12. Fast Read — Read large Excel/CSV files with Parquet caching
+
+Read large Excel files (hundreds of MB, millions of rows) 10-50x faster than `pandas.read_excel`. Uses Polars + Calamine (Rust engine) for parsing, and automatically caches to Parquet for near-instant subsequent reads. **Only converts the sheet you need** — other sheets are not touched.
+
+```python
+import tablegis as tg
+
+# Read a single sheet (only this sheet is converted, ~5s for first time)
+df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# Read again — cached, near-instant (~0.02s)
+df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# Read only specific columns (faster, less memory)
+df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市", "经度", "纬度"])
+
+# Return pandas DataFrame (compatible with other tablegis functions)
+pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
+
+# Read all sheets
+data = tg.fast_read("data.xlsx")
+
+# Read CSV
+df = tg.fast_read("data.csv")
+
+# Force refresh cache (after source file is updated)
+df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)
+```
+
+**Performance comparison** (290M rows, 10 sheets, 321MB Excel file):
+
+| Method | Single sheet (147K rows) | All sheets (2.9M rows) |
+|--------|-------------------------|------------------------|
+| `pandas.read_excel` | 244s | ~40min |
+| `tg.fast_read` (first time) | ~5s | ~2.5min |
+| `tg.fast_read` (cached) | **0.02s** | **0.12s** |
 
 ## Documentation
 

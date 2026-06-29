@@ -11,6 +11,7 @@
 *   **格式转换**: 方便地在 `GeoDataFrame` 与 `Shapefile`, `KML` 等格式之间转换。
 *   **坐标聚合**: 提供将坐标点聚合到网格的工具。
 *   **几何操作**: 包括合并多边形、计算质心、添加扇区等。
+*   **快速读取**: 大型Excel/CSV文件快速读取，Polars + Parquet缓存，速度提升10-50倍。
 
 ## 安装
 
@@ -455,6 +456,43 @@ df = pd.DataFrame({
 gdf = tg.df_to_gdf(df, geometry='wkt')
 print(gdf)
 ```
+
+### 12、快速读取 — 大型Excel/CSV文件高速读取（Parquet缓存加速）
+
+读取大型Excel文件（数百MB、数百万行）比 `pandas.read_excel` 快 10-50 倍。底层使用 Polars + Calamine（Rust引擎）解析，首次读取后自动缓存为 Parquet 列式格式，后续加载接近瞬时完成。**指定sheet时只转换该sheet，不会转换其他sheet**。
+
+```python
+import tablegis as tg
+
+# 读取单个sheet（只转换这一个，首次约5秒）
+df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# 再次读取同一sheet（走缓存，约0.02秒）
+df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# 只读取指定列（更快更省内存）
+df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市", "经度", "纬度"])
+
+# 返回 pandas DataFrame（与 tablegis 其他函数衔接）
+pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
+
+# 读取全部sheet
+data = tg.fast_read("data.xlsx")
+
+# 读取CSV
+df = tg.fast_read("data.csv")
+
+# 源文件更新后，强制刷新缓存
+df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)
+```
+
+**性能对比**（290万行、10个sheet、321MB Excel文件）：
+
+| 方法 | 单sheet（14.7万行） | 全量（290万行） |
+|------|---------------------|----------------|
+| `pandas.read_excel` | 244秒 | ~40分钟 |
+| `tg.fast_read`（首次） | ~5秒 | ~2.5分钟 |
+| `tg.fast_read`（缓存） | **0.02秒** | **0.12秒** |
 
 
 ## 贡献
