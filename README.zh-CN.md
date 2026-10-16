@@ -12,6 +12,7 @@
 *   **坐标聚合**: 提供将坐标点聚合到网格的工具。
 *   **几何操作**: 包括合并多边形、计算质心、添加扇区等。
 *   **快速读取**: 大型Excel/CSV文件快速读取，Polars + Parquet缓存，速度提升10-50倍。
+*   **极速xlsx读写**: 内置C++引擎——165MB xlsx约8秒读入pandas，一行代码xlsx转CSV。
 
 ## 安装
 
@@ -581,6 +582,34 @@ rm -rf .parquet_cache
 | `tg.fast_read`（首次） | ~5秒 | ~2.5分钟 | — |
 | `tg.fast_read`（缓存） | **0.02秒** | **0.12秒** | 82MB（全量） |
 
+
+### 13、极速 xlsx 转 CSV / pandas 读取（内置 C++ 引擎）
+
+`read_xlsx` 和 `xlsx2csv` 使用原生 C++ 引擎（libdeflate + 多线程 XML 扫描，已编译进 Windows / Linux / macOS 的 wheel）。无缓存、无中间文件——数据从 xlsx 字节直达 DataFrame 或 CSV 文件。
+
+**实测基准**（165MB xlsx，50 万行 × 59 列）：C++ 引擎 **约 6 秒** · Calamine 约 180 秒 · `pandas.read_excel`（openpyxl）约 40 分钟。
+
+```python
+import tablegis as tg
+
+# 极速读取 xlsx -> pandas DataFrame（C++ 引擎，内存直读，不落盘）
+df = tg.read_xlsx("data.xlsx")                        # 第一个 sheet，165MB 约 8 秒
+df = tg.read_xlsx("data.xlsx", sheet="站点信息")       # 任意 sheet
+df = tg.read_xlsx("data.xlsx", columns=["城市", "经度", "纬度"])  # 只读指定列
+
+# 极速 xlsx 转 CSV
+tg.xlsx2csv("data.xlsx")                              # data.xlsx -> data.csv
+tg.xlsx2csv("data.xlsx", "out/全量.csv")               # 指定输出路径
+tg.xlsx2csv("data.xlsx", sheet="站点信息")             # 指定 sheet
+paths = tg.xlsx2csv("data.xlsx", sheet=None)          # 全部 sheet -> data_<表名>.csv
+```
+
+| 项目 | 说明 |
+|------|------|
+| **引擎优先级** | 原生 C++ 扩展 → 内置 exe（Windows 兜底）→ Calamine |
+| **C++ 引擎覆盖** | 第一个 worksheet（最快路径）；其他 sheet 自动走 Calamine |
+| **无缓存** | 一次性转换——除了你要的 CSV，不写任何东西到磁盘 |
+| **全平台** | Windows / Linux / macOS 预编译 wheel（cp39–cp313）；其他平台自动从源码编译 |
 
 ## 贡献
 

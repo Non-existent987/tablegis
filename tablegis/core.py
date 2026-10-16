@@ -1010,11 +1010,15 @@ def match_layer(df, layer, lon='lon', lat='lat', columns=None, default_value=Non
 
     # Prepare points
     temp_id = '___temp_id___'
+    match_geom = '___match_geom___'
     df_temp = df.copy()
     df_temp[temp_id] = range(len(df_temp))
     
+    is_gdf = isinstance(df, gpd.GeoDataFrame)
+    original_geom_name = df.geometry.name if is_gdf else None
+    
     # Use existing add_points function
-    points_gdf = add_points(df_temp, lon, lat)
+    points_gdf = add_points(df_temp, lon, lat, geometry=match_geom)
 
     # Spatial Join
     try:
@@ -1027,14 +1031,14 @@ def match_layer(df, layer, lon='lon', lat='lat', columns=None, default_value=Non
         # Drop duplicates, keeping first match
         result_joined = joined.drop_duplicates(subset=[temp_id])
         # Drop helper columns
-        drop_cols = ['geometry', 'index_right', temp_id]
+        drop_cols = [match_geom, 'index_right', temp_id]
         result_joined = result_joined.drop(columns=[c for c in drop_cols if c in result_joined.columns])
         result = result_joined
         
     elif match_method == 'multi_row':
         # Expand rows
         result_joined = joined
-        drop_cols = ['geometry', 'index_right', temp_id]
+        drop_cols = [match_geom, 'index_right', temp_id]
         result_joined = result_joined.drop(columns=[c for c in drop_cols if c in result_joined.columns])
         result = result_joined
 
@@ -1066,6 +1070,18 @@ def match_layer(df, layer, lon='lon', lat='lat', columns=None, default_value=Non
         for col in target_cols:
             if col in result.columns:
                 result[col] = result[col].fillna(default_value)
+
+    # Restore GeoDataFrame if input was GeoDataFrame
+    if is_gdf and original_geom_name and original_geom_name in result.columns:
+        if not isinstance(result, gpd.GeoDataFrame):
+            result = gpd.GeoDataFrame(result, geometry=original_geom_name, crs=df.crs)
+        else:
+            try:
+                if result.geometry.name != original_geom_name:
+                    result = result.set_geometry(original_geom_name)
+            except AttributeError:
+                # Active geometry column might be missing (we dropped it), so just set the new one
+                result = result.set_geometry(original_geom_name)
 
     return result
 

@@ -1,0 +1,618 @@
+# tablegis
+
+`tablegis` is a Python package for geospatial data processing and analysis, built on `geopandas`, `pandas`, `shapely`, and `pyproj`. It provides a series of utility functions to simplify common GIS operations.
+
+## Features
+
+*   **Distance Calculation**: Efficiently compute the nearest distance between DataFrames.
+*   **Spatial Analysis**: Create buffers (input in meters), Voronoi polygons, Delaunay triangulations, etc.
+*   **Format Conversion**: Easily convert between `GeoDataFrame` and formats like `Shapefile`, `KML`, etc.
+*   **Coordinate Aggregation**: Provides tools for aggregating coordinate points into grids.
+*   **Geometric Operations**: Includes merging polygons, calculating centroids, adding sectors, etc.
+*   **Fast Table Reading**: Read large Excel/CSV files 10-50x faster with Polars + Parquet caching.
+*   **Ultra-fast xlsx I/O**: Built-in C++ engine — 165MB xlsx → pandas in ~8s, one-line xlsx → CSV conversion.
+
+## Installation
+
+1、You can install `tablegis` from PyPI:
+
+```bash
+pip install tablegis
+```
+
+2、Or, install the latest version directly from the GitHub repository:
+
+```bash
+pip install git+https://github.com/Non-existent987/tablegis.git
+```
+3、After downloading the project, it is convenient to import from local files for modification.
+```bash
+import sys
+import pandas as pd
+# Find the file path of the tablegis you downloaded.
+sys.path.insert(0, r'C:\Users\Administrator\Desktop\tablegis')
+# Now it can be imported.
+import tablegis as tg
+```
+## Quick Start
+
+Here is a simple example of how to use `tablegis`:
+
+### 1. Find the nearest point (in df2) for each point in df1 and add its ID, longitude, latitude, and distance.
+
+```python
+import pandas as pd
+import tablegis as tg
+
+# Create two example DataFrames
+df1 = pd.DataFrame({
+    'id': [1, 2, 3],
+    'lon1': [116.404, 116.405, 116.406],
+    'lat1': [39.915, 39.916, 39.917]
+})
+
+df2 = pd.DataFrame({
+    'id': ['A', 'B', 'C', 'D'],
+    'lon2': [116.403, 116.407, 116.404, 116.408],
+    'lat2': [39.914, 39.918, 39.916, 39.919]
+})
+
+# Calculate the nearest 1 point
+result = tg.min_distance_twotable(df1, df2, lon1='lon1', lat1='lat1', lon2='lon2', lat2='lat2', df2_id='id', n=1)
+# Calculate the nearest 2 points
+result2 = tg.min_distance_twotable(df1, df2, lon1='lon1', lat1='lat1', lon2='lon2', lat2='lat2', df2_id='id', n=2)
+
+print("\nExample result (distance in meters):")
+print(result)
+print(result2)
+```
+
+**Result Display:**
+
+<table>
+<tr>
+<td style="vertical-align: top; padding-right: 50px;">
+
+**Table df1:**
+
+| id | lon1  | lat1 |
+|----|-------|------|
+| A  | 114.0 | 30.0 |
+| B  | 114.1 | 30.1 |
+
+</td>
+<td style="vertical-align: top;">
+
+**Table df2:**
+
+| id | lon2   | lat2  |
+|----|--------|-------|
+| p1 | 114.01 | 30.01 |
+| p2 | 114.05 | 30.05 |
+| p3 | 114.12 | 30.12 |
+
+</td>
+</tr>
+</table>
+
+**Nearest 1 point:**
+
+| id | lon1  | lat1 | nearest1_id | nearest1_lon2 | nearest1_lat2 | nearest1_distance |
+|----|-------|------|-------------|---------------|---------------|-------------------|
+| A  | 114.0 | 30.0 | p1          | 114.01        | 30.01         | 1470.515926       |
+| B  | 114.1 | 30.1 | p3          | 114.12        | 30.12         | 2939.507557       |
+
+**Nearest 2 points:**
+
+| id | lon1  | lat1 | nearest1_id | nearest1_lon2 | nearest1_lat2 | nearest1_distance | nearest2_id | nearest2_lon2 | nearest2_lat2 | nearest2_distance | mean_distance |
+|----|-------|------|-------------|---------------|---------------|-------------------|-------------|---------------|---------------|-------------------|---------------|
+| A  | 114.0 | 30.0 | p1          | 114.01        | 30.01         | 1470.515926       | p2          | 114.05        | 30.05         | 7351.852775       | 4411.184351   |
+| B  | 114.1 | 30.1 | p3          | 114.12        | 30.12         | 2939.507557       | p2          | 114.05        | 30.05         | 7350.037700       | 5144.772629   |
+
+### 2. Find the nearest point for each point within the same table and add its ID, longitude, latitude, and distance.
+
+```python
+import pandas as pd
+import tablegis as tg
+
+# Create an example DataFrame
+df2 = pd.DataFrame({
+    'id': ['A', 'B', 'C', 'D'],
+    'lon2': [116.403, 116.407, 116.404, 116.408],
+    'lat2': [39.914, 39.918, 39.916, 39.919]
+})
+
+# Calculate the nearest 1 point
+result = tg.min_distance_onetable(df2, 'lon2', 'lat2', idname='id', n=1)
+# Calculate the nearest 2 points
+result2 = tg.min_distance_onetable(df2, 'lon2', 'lat2', idname='id', n=2)
+
+print("\nExample result (distance in meters):")
+print(result)
+print(result2)
+```
+
+**Result Display:**
+
+**Table df2:**
+
+| id | lon2   | lat2  |
+|----|--------|-------|
+| p1 | 114.01 | 30.01 |
+| p2 | 114.05 | 30.05 |
+| p3 | 114.12 | 30.12 |
+
+**Nearest 1 point:**
+
+|    | id | lon2   | lat2  | nearest1_id | nearest1_lon2 | nearest1_lat2 | nearest1_distance |
+|---:|----|--------|-------|-------------|---------------|---------------|-------------------|
+|  0 | p1 | 114.01 | 30.01 | p2          | 114.05        | 30.05         | 5881.336911       |
+|  1 | p2 | 114.05 | 30.05 | p1          | 114.01        | 30.01         | 5881.336911       |
+|  2 | p3 | 114.12 | 30.12 | p2          | 114.05        | 30.05         | 10289.545038      |
+
+**Nearest 2 points:**
+
+|    | id | lon2   | lat2  | nearest1_id | nearest1_lon2 | nearest1_lat2 | nearest1_distance | nearest2_id | nearest2_lon2 | nearest2_lat2 | nearest2_distance | mean_distance |
+|---:|----|--------|-------|-------------|---------------|---------------|-------------------|-------------|---------------|---------------|-------------------|---------------|
+|  0 | p1 | 114.01 | 30.01 | p2          | 114.05        | 30.05         | 5881.336911       | p3          | 114.12        | 30.12         | 16170.880987      | 11026.108949  |
+|  1 | p2 | 114.05 | 30.05 | p1          | 114.01        | 30.01         | 5881.336911       | p3          | 114.12        | 30.12         | 10289.545038      | 8085.440974   |
+|  2 | p3 | 114.12 | 30.12 | p2          | 114.05        | 30.05         | 10289.545038      | p1          | 114.01        | 30.01         | 16170.880987      | 13230.213012  |
+
+### 3、Replace the longitude and latitude columns in the table with the corresponding values in another coordinate system, and add a new column for longitude and latitude.
+```python
+import pandas as pd
+import tablegis as tg
+
+# Create two sample DataFrames
+df = pd.DataFrame({
+    'id': ['A', 'B', 'C', 'D'],
+    'lon': [116.403, 116.407, 116.404, 116.408],
+    'lat': [39.914, 39.918, 39.916, 39.919]
+})
+
+# Convert the latitude and longitude in the 84 coordinate system to the latitude and longitude in the web_mercator system.
+result = tg.to_lonlat(df,'lon','lat', from_crs="wgs84", to_crs="web_mercator")
+print(result)
+```
+**Result Display:**  
+**Added two columns of "web_mercator"：**
+| id  | lon      | lat      | web_mercator_lon | web_mercator_lat |
+| --- | -------- | -------- | ---------------- | ---------------- |
+| A   | 116.403  | 39.914   | 12957922.69      | 4853452.853      |
+| B   | 116.407  | 39.918   | 12958367.96      | 4854033.408      |
+| C   | 116.404  | 39.916   | 12958034.01      | 4853743.126      |
+| D   | 116.408  | 39.919   | 12958479.28      | 4854178.552      |
+
+
+### 4、Generate buffers of the specified range based on the longitude and latitude columns in the table and add the geometry.
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+        'lon': [116.4074, 121.4737],
+        'lat': [39.9042, 31.2304],
+        'buffer_size': [500, 1000]
+    })
+# Set a 100-meter buffer zone
+res_100 = tg.add_buffer(df,'lon','lat',100) 
+# Set the buffer range according to the numbers in the "buffer_size" column.
+res_buffer_size = tg.add_buffer(df,'lon','lat','buffer_size')
+print(res_100)
+print(res_buffer_size)
+```
+**Result Display:**
+## df table
+
+|   | lon      | lat     | buffer_size |
+|---|----------|---------|-------------|
+| 0 | 116.4074 | 39.9042 | 500         |
+| 1 | 121.4737 | 31.2304 | 1000        |
+
+## Set a 100-meter buffer zone
+
+|   | lon      | lat     | buffer_size | geometry                                        |
+|---|----------|---------|-------------|-------------------------------------------------|
+| 0 | 116.4074 | 39.9042 | 500         | POLYGON ((116.40857 39.90421, 116.40856 39.904... |
+| 1 | 121.4737 | 31.2304 | 1000        | POLYGON ((121.47475 31.23036, 121.47474 31.230... |
+
+## Set the buffer range according to the numbers in the "buffer_size" column.
+
+|   | lon      | lat     | buffer_size | geometry                                        |
+|---|----------|---------|-------------|-------------------------------------------------|
+| 0 | 116.4074 | 39.9042 | 500         | POLYGON ((116.41325 39.90423, 116.41322 39.903... |
+| 1 | 121.4737 | 31.2304 | 1000        | POLYGON ((121.48417 31.23003, 121.48408 31.229... |
+> Addition: `add_buffer` now supports a `min_distance` parameter. Pass a scalar or a column name to create a ring (inner radius = `min_distance`, outer radius = `dis`). If `min_distance` is `None` (default) the function creates a filled buffer as before.
+
+### 4a. Expand or shrink existing GeoDataFrame geometries by a buffer distance
+
+```python
+import geopandas as gpd
+from shapely.geometry import Point, Polygon
+import tablegis as tg
+
+# Create a GeoDataFrame with point geometries
+gdf_point = gpd.GeoDataFrame(
+    {'id': [1, 2]},
+    geometry=[Point(116.4074, 39.9042), Point(121.4737, 31.2304)],
+    crs='EPSG:4326'
+)
+
+# Expand buffer by 100 meters
+gdf_expanded = tg.buffer(gdf_point, 100)
+print(gdf_expanded)
+
+# Shrink buffer by 50 meters (negative value)
+gdf_shrunk = tg.buffer(gdf_point, -50)
+print(gdf_shrunk)
+
+# Use with polygon geometries
+polygon = Polygon([(116.3, 39.8), (116.5, 39.8), (116.5, 40.0), (116.3, 40.0)])
+gdf_poly = gpd.GeoDataFrame(
+    {'id': [1]},
+    geometry=[polygon],
+    crs='EPSG:4326'
+)
+gdf_poly_expanded = tg.buffer(gdf_poly, 200)
+print(gdf_poly_expanded)
+```
+
+**Key Features:**
+- Automatically projects to UTM for accurate meter-based calculations
+- Supports both positive (expand) and negative (shrink) distances
+- Preserves original CRS in output
+- Handles multi-part geometries
+- Warns if input GeoDataFrame has no CRS (assumes EPSG:4326)
+
+### Polygons
+
+- `add_polygon(df, lon, lat, num_sides, radius=..., side_length=..., interior_angle=None, rotation=0.0, geometry='geometry')`
+
+    Create regular polygons around points. Parameters:
+    - `radius` / `side_length`: one required; can be scalar or column name (meters in projected coordinates).
+    - `interior_angle`: optional interior angle in degrees. If provided, function enters interior-mode; if `None` (default), operates in exterior/regular mode.
+    - `rotation`: overall rotation in degrees (clockwise positive) applied after interior/exterior handling. Can be scalar or column name for per-row rotation.
+    - `geometry`: output geometry column name.
+
+    Note: vertex computation is vectorized for performance on large datasets; both `interior_angle` and `rotation` accept scalars or per-row column names.
+
+    Example (rotated hexagon by 10°):
+
+    ```python
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=6, radius=500, rotation=10.0)
+    ```
+
+    Example (per-row interior angle and rotation):
+
+    ```python
+    res = tg.add_polygon(df, lon='lon', lat='lat', num_sides=5, radius='r_col', interior_angle='inner_deg', rotation='rot_deg')
+    ```
+
+### 5、Convert the latitude and longitude columns in the table into point-shaped geometries and then transform them into a gdf.
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+        'lon': [116.4074, 121.4737, 113.2644],
+        'lat': [39.9042, 31.2304, 23.1291],
+        'city': ['Beijing', 'Shanghai', 'Guangzhou']
+    })
+# Generate points based on latitude and longitude
+result1 = tg.add_points(df)
+print(result1)
+```
+**Result Display:**
+
+| lon       | lat        | city      | geometry                     |
+|-----------|------------|-----------|------------------------------|
+| 116.4074  | 39.9042    | Beijing   | POINT (116.4074 39.9042)     |
+| 121.4737  | 31.2304    | Shanghai  | POINT (121.4737 31.2304)     |
+| 113.2644  | 23.1291    | Guangzhou | POINT (113.2644 23.1291)     |
+
+
+### 6、Concentrate the latitude and longitude data in the table using the method of expansion and recombination, and add the fused id as well as the range geom.
+```python
+import pandas as pd
+import tablegis as tg
+# Prepare test data
+test_data = pd.DataFrame({
+    'lon': [116.40, 116.41, 116.50, 116.51],
+    'lat': [39.90, 39.91, 39.95, 39.96],
+    'name': ['A', 'B', 'C', 'D'],
+    'value': [1, 2, 3, 4]
+})
+
+# Test 1: Return geometry
+result_no_geom = tg.add_buffer_groupbyid(
+    test_data, 
+    lon='lon', 
+    lat='lat',
+    distance=1000,
+    columns_name='group_id',
+    id_label_prefix='id_',
+    geom=True
+)
+# Test 2: Do not return geometry
+result_geom = tg.add_buffer_groupbyid(
+    test_data, 
+    lon='lon', 
+    lat='lat',
+    distance=1000,
+    columns_name='group_id',
+    id_label_prefix='id_',
+    geom=False
+)
+```
+**Result Display:**
+## no geom
+| lon   | lat   | name | value | group_id |
+|-------|-------|------|-------|----------|
+| 116.40| 39.90 | A    | 1     | id_0     |
+| 116.41| 39.91 | B    | 2     | id_0     |
+| 116.50| 39.95 | C    | 3     | id_1     |
+| 116.51| 39.96 | D    | 4     | id_1     |
+
+## geom
+| lon   | lat   | name | value | group_id | geometry |
+|-------|-------|------|-------|----------|---------|
+| 116.40| 39.90 | A    | 1     | id_0     | POLYGON ((116.41149 39.8983, 116.41122 39.8974...) |
+| 116.41| 39.91 | B    | 2     | id_0     | POLYGON ((116.41149 39.8983, 116.41122 39.8974...) |
+| 116.50| 39.95 | C    | 3     | id_1     | POLYGON ((116.51149 39.94829, 116.51122 39.947...) |
+| 116.51| 39.96 | D    | 4     | id_1     | POLYGON ((116.51149 39.94829, 116.51122 39.947...) |
+
+### 7. Add a column for area to geopandas. The area is calculated based on the shape's area. The unit of the geographic coordinate system is meters, which is consistent with the units of both the horizontal and vertical planes.
+```python
+import tablegis as tg
+import geopandas as gpd
+polygon = Polygon([(113.343, 29.3434), (113.353, 29.3434), (113.353, 29.3534), (113.343, 29.3534)])
+gdf = gpd.GeoDataFrame({'id': [1], 'geometry': [polygon]}, crs="epsg:4326")
+# Test 1: Add Area Column (Automatically Select Coordinate System)
+result_gdf = tg.add_area(gdf, 'area')
+print('area:',result_gdf['area'].astype(int)[0])
+
+# Test 2: Add column name for area and coordinate system
+result_gdf = tg.add_area(gdf, 'area', crs_epsg=32650)
+print('area:',result_gdf['area'].astype(int)[0])
+
+```
+结果展示：  
+## Add Area Column (Automatically Select Coordinate System)
+```
+Center: (113.3480, 29.3484) → UTM Zone 49 N → EPSG:32649
+area: 1076905
+```
+
+## Add column names for area and coordinate system
+```
+area: 1078867
+```
+
+
+
+
+
+### 8. Create sector (wedge) polygons around points with specified azimuth, distance, and angle.
+
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+    'lon': [116.4074, 121.4737],
+    'lat': [39.9042, 31.2304],
+    'azimuth': [45, 90],
+    'distance': [1000, 1500],
+    'angle': [60, 45]
+})
+
+# Create sectors with default parameters
+result = tg.add_sectors(df, lon='lon', lat='lat', azimuth='azimuth', distance='distance', angle='angle')
+print(result)
+```
+
+### 9. Play a built-in notification sound.
+
+```python
+import tablegis as tg
+
+# Play the notification sound (Windows only)
+tg.dog()
+```
+
+### 10. Match spatial layer attributes to DataFrame
+Match attributes from a spatial layer (GeoDataFrame or file) to a DataFrame based on spatial relationship.
+
+```python
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Polygon
+import tablegis as tg
+
+# Data to be matched
+df = pd.DataFrame({'lon': [116.4], 'lat': [39.9]})
+
+# Spatial layer (e.g., administrative districts)
+poly = Polygon([(116.0, 39.0), (117.0, 39.0), (117.0, 40.0), (116.0, 40.0)])
+gdf_layer = gpd.GeoDataFrame({'name': ['Beijing'], 'code': [100]}, geometry=[poly], crs="EPSG:4326")
+
+# Match 'name' from layer to df
+res = tg.match_layer(df, gdf_layer, columns=['name'])
+print(res)
+```
+
+### 11. Convert DataFrame with WKT to GeoDataFrame
+Convert a DataFrame containing WKT (Well-Known Text) geometry strings into a GeoDataFrame.
+
+```python
+import pandas as pd
+import tablegis as tg
+
+df = pd.DataFrame({
+    'id': [1, 2],
+    'wkt': ['POINT (116.4 39.9)', 'POINT (121.5 31.2)']
+})
+
+gdf = tg.df_to_gdf(df, geometry='wkt')
+print(gdf)
+```
+
+### 12. Fast Read — Read large Excel/CSV files with Parquet caching
+
+Read large Excel files (hundreds of MB, millions of rows) 10-50x faster than `pandas.read_excel`. Uses Polars + Calamine (Rust engine) for parsing, and automatically caches to Parquet for near-instant subsequent reads. **Only converts the sheet you need** — other sheets are not touched.
+
+#### Basic Usage
+
+```python
+import tablegis as tg
+
+# Read a single sheet (only this sheet is converted, ~5s for first time)
+df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# Read again — cached, near-instant (~0.02s)
+df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# Read only specific columns (faster, less memory)
+df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市", "经度", "纬度"])
+
+# Return pandas DataFrame (compatible with other tablegis functions)
+pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
+
+# Read all sheets (returns a dict: {sheet_name: DataFrame})
+data = tg.fast_read("data.xlsx")
+
+# Read CSV (no caching needed — Polars reads CSV natively and fast)
+df = tg.fast_read("data.csv")
+
+# Force refresh cache (after source file is updated)
+df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)
+```
+
+#### Real-World Scenarios
+
+**Scenario 1: Telecom planning — read a specific sheet from a multi-sheet workbook**
+
+```python
+import tablegis as tg
+
+# A 321MB planning workbook with 10 sheets — only read the one you need
+stations = tg.fast_read("5g_planning_2024.xlsx", sheet="站点规划")
+print(f"Loaded {len(stations):,} stations in milliseconds")
+
+# Chain with other tablegis functions
+pd_stations = tg.fast_read("5g_planning_2024.xlsx", sheet="站点规划", to_pandas=True)
+buffers = tg.add_buffer(pd_stations, lon="经度", lat="纬度", dis=500)
+```
+
+**Scenario 2: Selective column loading for large datasets**
+
+```python
+# Only load the columns you need — saves memory and time
+df = tg.fast_read("huge_data.xlsx", sheet="orders", columns=["order_id", "city", "amount"])
+print(df.head())
+
+# Works with CSV too
+df = tg.fast_read("transactions.csv", columns=["date", "revenue"])
+```
+
+**Scenario 3: Read all sheets and iterate**
+
+```python
+# Read all sheets at once (first time converts all, cached after)
+all_data = tg.fast_read("report.xlsx")
+
+for sheet_name, df in all_data.items():
+    print(f"Sheet '{sheet_name}': {len(df):,} rows × {len(df.columns)} columns")
+
+# Convert a specific sheet to pandas for tablegis compatibility
+pd_df = all_data["边界信息"].to_pandas()
+```
+
+**Scenario 4: Data pipeline — refresh after source update**
+
+```python
+# Initial read (creates cache)
+df = tg.fast_read("live_data.xlsx", sheet="metrics")
+
+# ... source file gets updated externally ...
+
+# Force refresh to pick up changes
+df = tg.fast_read("live_data.xlsx", sheet="metrics", refresh=True)
+```
+
+#### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Rust-powered parsing** | Calamine engine reads Excel 10-50x faster than openpyxl |
+| **Automatic Parquet cache** | First read converts to `.parquet_cache/`; subsequent reads load in milliseconds |
+| **Sheet-isolated conversion** | Specifying `sheet="X"` only converts sheet X — other sheets are never touched |
+| **Smart type casting** | Numeric strings auto-detected and cast to Float64/Int64 (with 5% tolerance for mixed columns) |
+| **MD5-based invalidation** | Source file changes are detected via MD5; cache is automatically rebuilt |
+| **Column pruning** | `columns` parameter enables lazy column loading from Parquet |
+| **Polars or pandas** | Return Polars (default, faster) or pandas (`to_pandas=True`) DataFrame |
+| **CSV support** | CSV files read natively by Polars — fast enough that no caching is needed |
+
+#### Cache Management
+
+Cache files are stored in `.parquet_cache/<filename>/` relative to your working directory. Each sheet becomes a `<sheet_name>.parquet` file, plus a `_meta.json` for tracking MD5 and row counts.
+
+```python
+# Cache directory structure after reading "data.xlsx" sheet "站点信息":
+# .parquet_cache/
+#   data/
+#     站点信息.parquet    # columnar cache for this sheet
+#     _meta.json          # {md5: "...", sheets: {"站点信息": 147000}}
+```
+
+To clear the cache, simply delete the `.parquet_cache` directory:
+
+```bash
+rm -rf .parquet_cache
+```
+
+#### Performance Comparison
+
+Test file: 290M rows, 10 sheets, 321MB Excel file.
+
+| Method | Single sheet (147K rows) | All sheets (2.9M rows) | Memory |
+|--------|-------------------------|------------------------|--------|
+| `pandas.read_excel` | 244s | ~40min | 238MB (single sheet) |
+| `tg.fast_read` (first time) | ~5s | ~2.5min | — |
+| `tg.fast_read` (cached) | **0.02s** | **0.12s** | 82MB (all sheets) |
+
+### 13. Ultra-fast xlsx → CSV / pandas (built-in C++ engine)
+
+`read_xlsx` and `xlsx2csv` use a native C++ engine (libdeflate + multithreaded XML scanning, compiled into the wheels for Windows / Linux / macOS). No cache, no intermediate files — data flows straight from the xlsx bytes to your DataFrame or CSV file.
+
+**Benchmark** (165 MB xlsx, 500k rows × 59 columns): C++ engine **~6s** · Calamine ~180s · `pandas.read_excel` (openpyxl) ~40min.
+
+```python
+import tablegis as tg
+
+# Fast read xlsx -> pandas DataFrame (C++ engine, in-memory, no temp files)
+df = tg.read_xlsx("data.xlsx")                        # first sheet, ~8s for 165MB
+df = tg.read_xlsx("data.xlsx", sheet="站点信息")       # any sheet by name
+df = tg.read_xlsx("data.xlsx", columns=["城市", "经度", "纬度"])  # column pruning
+
+# Fast xlsx -> CSV conversion
+tg.xlsx2csv("data.xlsx")                              # data.xlsx -> data.csv
+tg.xlsx2csv("data.xlsx", "out/全量.csv")               # custom output path
+tg.xlsx2csv("data.xlsx", sheet="站点信息")             # specific sheet
+paths = tg.xlsx2csv("data.xlsx", sheet=None)          # all sheets -> data_<表名>.csv
+```
+
+| Item | Description |
+|------|-------------|
+| **Engine priority** | Native C++ extension → bundled exe (Windows fallback) → Calamine |
+| **C++ engine coverage** | First worksheet (fastest path); other sheets automatically use Calamine |
+| **No cache** | One-shot conversion — nothing is written to disk except the CSV you ask for |
+| **Windows / Linux / macOS** | Prebuilt wheels for cp39–cp313 via cibuildwheel; other platforms compile from source |
+
+## Contributing
+
+Contributions in all forms are welcome, including feature requests, bug reports, and code contributions.
+
+## License
+
+This project is licensed under the MIT License.

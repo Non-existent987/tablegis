@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Native C++ extension `tablegis._xlsx2csv` (0.0.16): pybind11 module vendoring libdeflate, in-process multithreaded XML scan. Prebuilt wheels for Windows/Linux/macOS (cp39-cp313) via cibuildwheel + scikit-build-core. First-sheet xlsx→CSV of a 165MB / 500k-row file: ~2-6s on all three platforms.
+- Backend priority in `read_xlsx`/`xlsx2csv`: native extension → bundled exe (Windows fallback) → Calamine. Non-x86 platforms without a wheel build the extension from source automatically.
+- Built-in C++ engine (0.0.16): `xlsx2csv.exe` (Windows x64, ~900 KB) bundled in the wheel via `tablegis/bin/` as a fallback backend.
+- `read_xlsx` (0.0.16): One-shot fast xlsx → pandas DataFrame via Calamine engine, no cache, no intermediate files. ~10-50x faster than pandas.read_excel.
+- `xlsx2csv` (0.0.16): One-shot xlsx → csv conversion (Polars + Calamine read, Polars fast csv write). Supports single sheet (int/str) or all sheets (sheet=None, outputs `{name}_{sheet}.csv`). No cache.
 - `fast_read`: New function for reading large Excel/CSV files 10-50x faster than pandas.read_excel. Uses Polars + Calamine (Rust engine) with automatic Parquet caching. Supports sheet-isolated conversion, selective column loading, smart type casting, and MD5-based cache invalidation.
 - `buffer`: New function to expand/shrink existing GeoDataFrame geometries by a distance in meters. Automatically projects to UTM for accurate meter-based operations, supporting both positive (expand) and negative (shrink) distances.
 - `match_layer`: Match spatial layer attributes to a DataFrame based on spatial relationship (intersects/contains/within). Supports multiple matches handling (first/merge/explode) and dynamic geometry column detection.

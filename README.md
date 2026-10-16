@@ -15,6 +15,7 @@
 *   **Coordinate Aggregation**: Provides tools for aggregating coordinate points into grids.
 *   **Geometric Operations**: Includes merging polygons, calculating centroids, adding sectors, etc.
 *   **Fast Table Reading**: Read large Excel/CSV files 10-50x faster with Polars + Parquet caching.
+*   **Ultra-fast xlsx I/O**: Built-in C++ engine — 165MB xlsx → pandas in ~8s, one-line xlsx → CSV conversion.
 
 ## Installation
 
@@ -581,6 +582,34 @@ Detailed documentation is available in the [Wiki](https://github.com/Non-existen
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### 13. Ultra-fast xlsx → CSV / pandas (built-in C++ engine)
+
+`read_xlsx` and `xlsx2csv` use a native C++ engine (libdeflate + multithreaded XML scanning, compiled into the wheels for Windows / Linux / macOS). No cache, no intermediate files — data flows straight from the xlsx bytes to your DataFrame or CSV file.
+
+**Benchmark** (165 MB xlsx, 500k rows × 59 columns): C++ engine **~6s** · Calamine ~180s · `pandas.read_excel` (openpyxl) ~40min.
+
+```python
+import tablegis as tg
+
+# Fast read xlsx -> pandas DataFrame (C++ engine, in-memory, no temp files)
+df = tg.read_xlsx("data.xlsx")                        # first sheet, ~8s for 165MB
+df = tg.read_xlsx("data.xlsx", sheet="站点信息")       # any sheet by name
+df = tg.read_xlsx("data.xlsx", columns=["城市", "经度", "纬度"])  # column pruning
+
+# Fast xlsx -> CSV conversion
+tg.xlsx2csv("data.xlsx")                              # data.xlsx -> data.csv
+tg.xlsx2csv("data.xlsx", "out/全量.csv")               # custom output path
+tg.xlsx2csv("data.xlsx", sheet="站点信息")             # specific sheet
+paths = tg.xlsx2csv("data.xlsx", sheet=None)          # all sheets -> data_<表名>.csv
+```
+
+| Item | Description |
+|------|-------------|
+| **Engine priority** | Native C++ extension → bundled exe (Windows fallback) → Calamine |
+| **C++ engine coverage** | First worksheet (fastest path); other sheets automatically use Calamine |
+| **No cache** | One-shot conversion — nothing is written to disk except the CSV you ask for |
+| **Windows / Linux / macOS** | Prebuilt wheels for cp39–cp313 via cibuildwheel; other platforms compile from source |
 
 ## Changelog
 

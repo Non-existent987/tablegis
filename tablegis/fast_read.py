@@ -13,6 +13,11 @@ fast_read.py — 大型表格文件快速读取模块
 import time
 import json
 import hashlib
+import io
+import os
+import uuid
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional, Union, List
 
@@ -20,6 +25,47 @@ import pandas as pd
 import polars as pl
 
 CACHE_DIR = ".parquet_cache"
+
+# ---- 原生 C++ 扩展后端（pybind11 编译，全平台，最快）----
+try:
+    from tablegis._xlsx2csv import convert as _native_convert
+except ImportError:
+    _native_convert = None
+
+
+def _convert_first_sheet(path, csv_out):
+    """第一个 sheet 快速转换：优先原生扩展模块 → 内置 exe；成功返回 True"""
+    if _native_convert is not None:
+        try:
+            data = _native_convert(str(path))
+            Path(csv_out).write_bytes(data)
+            return True
+        except Exception:
+            pass  # 转换失败 → 回退 exe / calamine
+    return _run_exe(path, csv_out)
+
+
+def _exe_path():
+    """内置 xlsx2csv.exe（C++ 极速后端，仅 Windows 可用），未打包时返回 None"""
+    if os.name != "nt":
+        return None
+    p = Path(__file__).parent / "bin" / "xlsx2csv.exe"
+    return p if p.exists() else None
+
+
+def _run_exe(xlsx_path, csv_out):
+    """调用内置 exe 转换第一个 sheet，成功返回 True"""
+    exe = _exe_path()
+    if exe is None:
+        return False
+    csv_out = Path(csv_out)
+    csv_out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run([str(exe), str(xlsx_path), str(csv_out)],
+                           capture_output=True, timeout=1800)
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return r.returncode == 0 and csv_out.exists()
 
 
 def _md5(filepath):
@@ -182,6 +228,141 @@ def _ensure_all(xlsx_path, force=False):
     _save_meta(cache, meta)
     print(f"✅ 转换完成 {time.time()-t0:.1f}s")
     return cache
+
+
+def _pick_sheets(xlsx_path, sheet):
+    """根据 sheet 参数（int/str/None）解析出要处理的 sheet 名列表，返回 (全部名, 选中名)"""
+    from python_calamine import CalamineWorkbook
+    names = CalamineWorkbook.from_path(str(xlsx_path)).sheet_names
+    if sheet is None:
+        return names, names
+    if isinstance(sheet, int):
+        if not -len(names) <= sheet < len(names):
+            raise IndexError(f"sheet 序号越界: {sheet}，共 {len(names)} 个 sheet")
+        return names, [names[sheet]]
+    if sheet not in names:
+        raise ValueError(f"sheet '{sheet}' 不存在，可选: {names}")
+    return names, [sheet]
+
+
+def read_xlsx(file, sheet=0, columns=None):
+    """快速读取 xlsx 为 pandas DataFrame（calamine 引擎，无缓存，一次性读取）
+
+    比 pandas.read_excel (openpyxl) 快 10-50 倍，适合大文件。
+    直接返回 pandas，不落任何中间文件。
+
+    Parameters
+    ----------
+    file : str or Path
+        xlsx/xlsb 文件路径
+    sheet : int or str, default 0
+        sheet 序号或名称
+    columns : list of str, optional
+        只取指定列
+
+    Returns
+    -------
+    pandas.DataFrame
+
+    Examples
+    --------
+    >>> import tablegis as tg
+    >>> df = tg.read_xlsx("data.xlsx")            # 第一个 sheet
+    >>> df = tg.read_xlsx("data.xlsx", sheet="站点信息")
+    """
+    path = Path(file)
+    if not path.exists():
+        raise FileNotFoundError(f"文件不存在: {path}")
+    names, sel = _pick_sheets(path, sheet)
+    name = sel[0]
+
+    # ---- 第一个 sheet 走原生扩展/exe（快 10-30 倍）----
+    if name == names[0]:
+        # 原生扩展：CSV 直接在内存里流转，不落盘
+        if _native_convert is not None:
+            try:
+                data = _native_convert(str(path))
+                df = pl.read_csv(io.BytesIO(data), infer_schema_length=10000)
+                df = _cast_types(df)
+                if columns:
+                    df = df.select(columns)
+                return df.to_pandas()
+            except Exception:
+                pass  # 转换失败 → 回退 exe / calamine
+        # exe 后端：经临时文件
+        if _run_exe(path, tmp := Path(tempfile.gettempdir()) / f"tablegis_{uuid.uuid4().hex}.csv"):
+            try:
+                df = pl.read_csv(str(tmp), infer_schema_length=10000)
+                df = _cast_types(df)
+                if columns:
+                    df = df.select(columns)
+                return df.to_pandas()
+            finally:
+                tmp.unlink(missing_ok=True)
+
+    # ---- calamine 后端 ----
+    df = pl.read_excel(str(path), sheet_name=name,
+                       engine="calamine", infer_schema_length=10000)
+    df = _cast_types(df)
+    if columns:
+        df = df.select(columns)
+    return df.to_pandas()
+
+
+def xlsx2csv(xlsx, csv=None, sheet=0):
+    """xlsx 快速转 csv（calamine 引擎读取 + polars 写出，无缓存）
+
+    Parameters
+    ----------
+    xlsx : str or Path
+        xlsx/xlsb 文件路径
+    csv : str or Path, optional
+        输出 csv 路径。默认与源文件同名（data.xlsx → data.csv）。
+        sheet=None 转全部 sheet 时，每个 sheet 一个 csv：
+        data.xlsx → data_表名.csv
+    sheet : int or str or None, default 0
+        sheet 序号或名称；None 表示全部 sheet
+
+    Returns
+    -------
+    str or list of str
+        生成的 csv 路径（全部 sheet 时返回列表）
+
+    Examples
+    --------
+    >>> import tablegis as tg
+    >>> tg.xlsx2csv("data.xlsx")                    # data.xlsx → data.csv
+    >>> tg.xlsx2csv("data.xlsx", sheet="站点信息")   # 指定 sheet
+    >>> tg.xlsx2csv("data.xlsx", "out/全量.csv")     # 指定输出路径
+    >>> tg.xlsx2csv("data.xlsx", sheet=None)        # 全部 sheet → data_表名.csv
+    """
+    path = Path(xlsx)
+    if not path.exists():
+        raise FileNotFoundError(f"文件不存在: {path}")
+
+    names, sel = _pick_sheets(path, sheet)
+    out_paths = []
+    for idx, name in enumerate(sel):
+        df = None
+        if len(sel) == 1:
+            out = Path(csv) if csv else path.with_suffix(".csv")
+        else:
+            out = Path(csv) if csv else path.with_suffix("")
+            out = out.with_name(f"{out.stem}_{name}{out.suffix if out.suffix else '.csv'}")
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        # ---- 第一个 sheet 走原生扩展/exe ----
+        if name == names[0] and _convert_first_sheet(path, out):
+            out_paths.append(str(out))
+            continue
+
+        # ---- calamine 后端 ----
+        df = pl.read_excel(str(path), sheet_name=name,
+                           engine="calamine", infer_schema_length=10000)
+        df = _cast_types(df)
+        df.write_csv(str(out))
+        out_paths.append(str(out))
+    return out_paths[0] if len(out_paths) == 1 else out_paths
 
 
 def fast_read(file, sheet=None, columns=None, refresh=False, to_pandas=False):
