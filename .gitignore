@@ -151,3 +151,6 @@ dist/
 
 # re-include vendored libdeflate core sources (generic lib/ rule above would exclude them)
 !tablegis/src/libdeflate/lib/
+
+# re-include vendored libdeflate cmake templates (generic *.in rule above excludes them)
+!tablegis/src/libdeflate/**/*.in
