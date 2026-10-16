@@ -10,6 +10,9 @@ set(LIBDEFLATE_BUILD_GZIP OFF CACHE BOOL "" FORCE)
 set(LIBDEFLATE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(tablegis/src/libdeflate)
 
+# 静态库需 fPIC，才能链接进 .so（Linux/macOS）
+set_target_properties(libdeflate_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 pybind11_add_module(_xlsx2csv tablegis/src/xlsx2csv_ext.cpp)
 target_link_libraries(_xlsx2csv PRIVATE libdeflate::libdeflate_static)
 target_compile_features(_xlsx2csv PRIVATE cxx_std_17)
