@@ -77,6 +77,29 @@ def _md5(filepath):
     return h.hexdigest()
 
 
+def _read_csv_robust(source):
+    """健壮的 CSV 读取：数字列里混有 #N/A 等错误串时自动降级
+
+    先按常规推断读；失败（如 ComputeError: could not parse `#N/A` as f64）
+    则全列按 String 读入，交给 _cast_types 智能转换——
+    错误串占比低(<5%)的列转数值、错误值变 null；占比高的列保持文本。
+    """
+    try:
+        return pl.read_csv(source, infer_schema_length=10000)
+    except Exception:
+        return _cast_types(pl.read_csv(source, infer_schema_length=0))
+
+
+def _read_excel_robust(path, sheet_name):
+    """健壮的 excel 读取（calamine）：同样防 #N/A 等错误串炸列"""
+    try:
+        return pl.read_excel(str(path), sheet_name=sheet_name,
+                             engine="calamine", infer_schema_length=10000)
+    except Exception:
+        return _cast_types(pl.read_excel(str(path), sheet_name=sheet_name,
+                                         engine="calamine", infer_schema_length=0))
+
+
 def _cast_types(df):
     """智能类型转换：纯数字的字符串列转数值，纯文本列保持不变
 
@@ -140,8 +163,7 @@ def _convert_sheet(xlsx_path, cache, sheet_name):
     ts = time.time()
     print(f"   ⏳ {sheet_name}...", end=" ", flush=True)
     try:
-        df = pl.read_excel(str(xlsx_path), sheet_name=sheet_name,
-                           engine="calamine", infer_schema_length=10000)
+        df = _read_excel_robust(xlsx_path, sheet_name)
         if len(df) == 0:
             print("跳过(空)")
             return None
@@ -308,7 +330,7 @@ def read_xlsx(file, sheet=0, columns=None):
         if _native_convert is not None:
             try:
                 data = _native_convert(str(path))
-                df = pl.read_csv(io.BytesIO(data), infer_schema_length=10000)
+                df = _read_csv_robust(io.BytesIO(data))
                 df = _cast_types(df)
                 if columns:
                     df = df.select(columns)
@@ -318,7 +340,7 @@ def read_xlsx(file, sheet=0, columns=None):
         # exe 后端：经临时文件
         if _run_exe(path, tmp := Path(tempfile.gettempdir()) / f"tablegis_{uuid.uuid4().hex}.csv"):
             try:
-                df = pl.read_csv(str(tmp), infer_schema_length=10000)
+                df = _read_csv_robust(str(tmp))
                 df = _cast_types(df)
                 if columns:
                     df = df.select(columns)
@@ -327,8 +349,7 @@ def read_xlsx(file, sheet=0, columns=None):
                 tmp.unlink(missing_ok=True)
 
     # ---- calamine 后端 ----
-    df = pl.read_excel(str(path), sheet_name=name,
-                       engine="calamine", infer_schema_length=10000)
+    df = _read_excel_robust(path, name)
     df = _cast_types(df)
     if columns:
         df = df.select(columns)

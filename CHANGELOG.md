@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.18] - 2026-11-06
+### Fixed
+- `read_xlsx` no longer crashes on Excel error cells (`#N/A`, `#DIV/0!`, ...) mixed into numeric columns. CSV/Excel reads now fall back to all-string parsing + smart type casting: sparse error tokens become null and the column stays numeric; text-heavy columns stay text. Applies to native-extension, exe and calamine backends.
+
 ## [0.0.17] - 2026-11-06
 ### Added
 - `read_xlsx_sheetnames(file)`: instant sheet-name extraction for .xlsx files. Pure stdlib (zipfile + regex on xl/workbook.xml), no cell parsing, no calamine/polars dependency — millisecond-level even on huge workbooks.
