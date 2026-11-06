@@ -26,6 +26,17 @@ import polars as pl
 
 CACHE_DIR = ".parquet_cache"
 
+# 视为"缺失"的字符串（空串、Excel 错误值、常见 NA 记号）
+_NA_TOKENS = [
+    "", "#N/A", "#NA", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NULL!",
+    "#NUM!", "#SPILL!", "#GETTING_DATA", "#CALC!",
+    "N/A", "NA", "NULL", "NAN", "NONE", "<NA>", "-", "--",
+]
+
+# 支持的文件类型
+EXCEL_SUFFIXES = {".xlsx", ".xlsb", ".xls", ".ods"}
+TEXT_SUFFIXES = {".csv", ".txt", ".tsv", ".dat", ".psv"}
+
 # ---- 原生 C++ 扩展后端（pybind11 编译，全平台，最快）----
 try:
     from tablegis._xlsx2csv import convert as _native_convert
@@ -77,7 +88,7 @@ def _md5(filepath):
     return h.hexdigest()
 
 
-def _read_csv_robust(source):
+def _read_csv_robust(source, sep=","):
     """健壮的 CSV 读取：数字列里混有 #N/A 等错误串时自动降级
 
     先按常规推断读；失败（如 ComputeError: could not parse `#N/A` as f64）
@@ -85,9 +96,89 @@ def _read_csv_robust(source):
     错误串占比低(<5%)的列转数值、错误值变 null；占比高的列保持文本。
     """
     try:
-        return pl.read_csv(source, infer_schema_length=10000)
+        return pl.read_csv(source, separator=sep, infer_schema_length=10000,
+                           truncate_ragged_lines=True)
     except Exception:
-        return _cast_types(pl.read_csv(source, infer_schema_length=0))
+        return _cast_types(pl.read_csv(source, separator=sep, infer_schema_length=0,
+                                       truncate_ragged_lines=True))
+
+
+def _detect_encoding(path):
+    """探测文本编码：utf-8 优先，失败退 gbk（中文 CSV 常态）"""
+    head = Path(path).read_bytes()[:1 << 18]
+    for enc in ("utf-8", "gbk"):
+        try:
+            head.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+    return "utf-8"
+
+
+def _sniff_sep(path, encoding="utf-8"):
+    """从首几行推断分隔符（tab / 逗号 / 分号 / 竖线）"""
+    try:
+        with open(path, "r", encoding=encoding, errors="replace") as f:
+            for _ in range(5):
+                line = f.readline()
+                if not line:
+                    break
+                line = line.rstrip("\r\n")
+                if not line.strip():
+                    continue
+                counts = {s: line.count(s) for s in ("\t", ",", ";", "|")}
+                best = max(counts, key=counts.get)
+                if counts[best] > 0:
+                    return best
+    except OSError:
+        pass
+    return ","
+
+
+def _read_text_table(path, sep=None, columns=None):
+    """读取文本表格（csv/txt/tsv/dat），自动识别编码和分隔符"""
+    enc = _detect_encoding(path)
+    sep = sep or _sniff_sep(path, enc)
+    src = str(path) if enc == "utf-8" else io.StringIO(path.read_text(encoding=enc))
+    df = _read_csv_robust(src, sep=sep)
+    df = _cast_types(df)
+    if columns:
+        df = df.select(columns)
+    return df
+
+
+def _first_sheet(path):
+    """第一个 sheet 名（纯标准库，毫秒级）；xlsb 等二进制格式返回 None"""
+    try:
+        names = read_xlsx_sheetnames(path)
+        return names[0] if names else None
+    except Exception:
+        return None
+
+
+def _read_sheet_once(path, name, columns=None):
+    """一次性读取单个 sheet（不落盘）
+
+    第一个 sheet：原生 C++ 扩展（内存 CSV）→ exe 兜底 → calamine
+    其他 sheet：calamine
+    """
+    is_first = name == _first_sheet(path)
+    if is_first:
+        if _native_convert is not None:
+            try:
+                df = _cast_types(_read_csv_robust(io.BytesIO(_native_convert(str(path)))))
+                return df.select(columns) if columns else df
+            except Exception:
+                pass  # → exe / calamine
+        tmp = Path(tempfile.gettempdir()) / f"tablegis_{uuid.uuid4().hex}.csv"
+        if _run_exe(path, tmp):
+            try:
+                df = _cast_types(_read_csv_robust(str(tmp)))
+                return df.select(columns) if columns else df
+            finally:
+                tmp.unlink(missing_ok=True)
+    df = _read_excel_robust(path, name)
+    return df.select(columns) if columns else df
 
 
 def _read_excel_robust(path, sheet_name):
@@ -101,33 +192,24 @@ def _read_excel_robust(path, sheet_name):
 
 
 def _cast_types(df):
-    """智能类型转换：纯数字的字符串列转数值，纯文本列保持不变
+    """智能类型转换：数值列转 Float64/Int64，文本列保持 String
 
-    Parameters
-    ----------
-    df : polars.DataFrame
-        原始DataFrame，可能有很多String列
-
-    Returns
-    -------
-    polars.DataFrame
-        类型转换后的DataFrame
-
-    Notes
-    -----
-    Calamine 读取混合类型列时 fallback 为 String，
-    这里尝试将看起来像数字的字符串列转回 Float64/Int64，
-    只有当转换失败率 < 5% 时才转换（避免把"城市"这种纯文本列误转）
+    空串、纯空白和 Excel 错误值（#N/A、#DIV/0! 等）都按"缺失"处理，
+    不参与失败率统计——否则一个带空单元格的角度列会被误判成纯文本。
+    失败率 <5% 才转换，避免把"城市"这类文本列误转。
     """
     exprs, skip = [], set()
     for c in df.columns:
         if df[c].dtype != pl.String:
             continue
-        test = df[c].cast(pl.Float64, strict=False)
-        orig_null, new_null = df[c].null_count(), test.null_count()
-        non_null = len(df) - orig_null
-        if non_null > 0 and (new_null - orig_null) / non_null < 0.05:
-            exprs.append(pl.col(c).cast(pl.Float64, strict=False).alias(c))
+        s = df[c]
+        upper = s.str.strip_chars().str.to_uppercase()
+        valid = ~(s.is_null() | upper.is_in(_NA_TOKENS))
+        n_valid = int(valid.sum())
+        test = upper.cast(pl.Float64, strict=False)
+        n_fail = int((test.is_null() & valid).sum())
+        if n_valid > 0 and n_fail / n_valid < 0.05:
+            exprs.append(test.alias(c))
         else:
             skip.add(c)
     if exprs:
@@ -159,16 +241,16 @@ def _save_meta(cache, meta):
 
 
 def _convert_sheet(xlsx_path, cache, sheet_name):
-    """转换单个 sheet 为 Parquet"""
+    """转换单个 sheet 为 Parquet（第一个 sheet 走原生 C++ 后端，比 calamine 快 3-4 倍）"""
     ts = time.time()
     print(f"   ⏳ {sheet_name}...", end=" ", flush=True)
     try:
-        df = _read_excel_robust(xlsx_path, sheet_name)
+        df = _read_sheet_once(xlsx_path, sheet_name)
         if len(df) == 0:
             print("跳过(空)")
             return None
         df = _cast_types(df)
-        df.write_parquet(str(cache / f"{sheet_name}.parquet"), compression="zstd")
+        df.write_parquet(str(cache / f"{sheet_name}.parquet"), compression="lz4")
         print(f"✅ {len(df):,}行 {time.time()-ts:.1f}s")
         return len(df)
     except Exception as e:
@@ -187,7 +269,8 @@ def _ensure_sheet(xlsx_path, sheet_name, force=False):
     meta = _load_meta(cache)
     parquet_path = cache / f"{sheet_name}.parquet"
 
-    file_changed = meta.get("md5") != _md5(xlsx_path)
+    cur_md5 = _md5(xlsx_path)          # 全文只算一次（大文件 ~0.3s）
+    file_changed = meta.get("md5") != cur_md5
     sheet_cached = parquet_path.exists() and not file_changed
 
     if not force and sheet_cached:
@@ -203,7 +286,7 @@ def _ensure_sheet(xlsx_path, sheet_name, force=False):
 
     if rows is not None:
         if file_changed:
-            meta = {"md5": _md5(xlsx_path), "sheets": {}}
+            meta = {"md5": cur_md5, "sheets": {}}
         meta["sheets"][sheet_name] = rows
         _save_meta(cache, meta)
 
@@ -254,8 +337,11 @@ def _ensure_all(xlsx_path, force=False):
 
 def _pick_sheets(xlsx_path, sheet):
     """根据 sheet 参数（int/str/None）解析出要处理的 sheet 名列表，返回 (全部名, 选中名)"""
-    from python_calamine import CalamineWorkbook
-    names = CalamineWorkbook.from_path(str(xlsx_path)).sheet_names
+    try:
+        names = read_xlsx_sheetnames(xlsx_path)   # xlsx: 毫秒级，不解压整个工作簿
+    except Exception:
+        from python_calamine import CalamineWorkbook   # xlsb/xls: 回退 calamine
+        names = CalamineWorkbook.from_path(str(xlsx_path)).sheet_names
     if sheet is None:
         return names, names
     if isinstance(sheet, int):
@@ -294,10 +380,10 @@ def read_xlsx_sheetnames(file_path):
 
 
 def read_xlsx(file, sheet=0, columns=None):
-    """快速读取 xlsx 为 pandas DataFrame（calamine 引擎，无缓存，一次性读取）
+    """一次性读取 xlsx 为 pandas DataFrame（不落缓存）
 
-    比 pandas.read_excel (openpyxl) 快 10-50 倍，适合大文件。
-    直接返回 pandas，不落任何中间文件。
+    等价于 fast_read(file, sheet=sheet, columns=columns, cache=False)。
+    Excel 第一个 sheet 走原生 C++ 后端，比 pandas.read_excel 快 1-2 个数量级。
 
     Parameters
     ----------
@@ -318,42 +404,7 @@ def read_xlsx(file, sheet=0, columns=None):
     >>> df = tg.read_xlsx("data.xlsx")            # 第一个 sheet
     >>> df = tg.read_xlsx("data.xlsx", sheet="站点信息")
     """
-    path = Path(file)
-    if not path.exists():
-        raise FileNotFoundError(f"文件不存在: {path}")
-    names, sel = _pick_sheets(path, sheet)
-    name = sel[0]
-
-    # ---- 第一个 sheet 走原生扩展/exe（快 10-30 倍）----
-    if name == names[0]:
-        # 原生扩展：CSV 直接在内存里流转，不落盘
-        if _native_convert is not None:
-            try:
-                data = _native_convert(str(path))
-                df = _read_csv_robust(io.BytesIO(data))
-                df = _cast_types(df)
-                if columns:
-                    df = df.select(columns)
-                return df.to_pandas()
-            except Exception:
-                pass  # 转换失败 → 回退 exe / calamine
-        # exe 后端：经临时文件
-        if _run_exe(path, tmp := Path(tempfile.gettempdir()) / f"tablegis_{uuid.uuid4().hex}.csv"):
-            try:
-                df = _read_csv_robust(str(tmp))
-                df = _cast_types(df)
-                if columns:
-                    df = df.select(columns)
-                return df.to_pandas()
-            finally:
-                tmp.unlink(missing_ok=True)
-
-    # ---- calamine 后端 ----
-    df = _read_excel_robust(path, name)
-    df = _cast_types(df)
-    if columns:
-        df = df.select(columns)
-    return df.to_pandas()
+    return fast_read(file, sheet=sheet, columns=columns, cache=False)
 
 
 def xlsx2csv(xlsx, csv=None, sheet=0):
@@ -412,93 +463,103 @@ def xlsx2csv(xlsx, csv=None, sheet=0):
     return out_paths[0] if len(out_paths) == 1 else out_paths
 
 
-def fast_read(file, sheet=None, columns=None, refresh=False, to_pandas=False):
-    """快速读取任意表格文件，按需 Parquet 缓存加速
 
-    支持读取 Excel (.xlsx/.xlsb) 和 CSV (.csv) 文件。
-    Excel 文件首次读取后自动缓存为 Parquet 格式，后续加载速度提升 200-20000 倍。
-    指定 sheet 时只转换这一个 sheet，不会转换其他 sheet。
+
+def fast_read(file, sheet=0, columns=None, sep=None, refresh=False,
+              to_pandas=True, cache=True):
+    """快速读取任意表格文件（Excel / CSV / TXT），返回 DataFrame
+
+    统一入口，支持：
+      - Excel: .xlsx / .xlsb / .xls / .ods
+      - 文本: .csv / .txt / .tsv / .dat / .psv（自动识别编码与分隔符）
+
+    Excel 第一个 sheet 走原生 C++ 后端（比 openpyxl 快 1-2 个数量级）；
+    cache=True（默认）时首次读取落地 Parquet 缓存，之后同 sheet 读取约 0.1-1 秒。
+    想要"不留任何缓存文件"的一次性读取，用 cache=False（等价于 read_xlsx）。
 
     Parameters
     ----------
     file : str or Path
-        文件路径，支持 .xlsx, .xlsb, .csv 格式
-    sheet : str, optional
-        指定 Excel sheet 名称。None 表示读取全部 sheet。
-        指定 sheet 时只转换这一个，速度最快。
+        文件路径
+    sheet : int or str or None, default 0
+        sheet 序号或名称；None = 读取全部 sheet（返回 dict）
     columns : list of str, optional
-        只加载指定列，减少内存占用和加载时间。
-        例如 columns=["城市", "经度", "纬度"]
+        只加载指定列，减少内存占用和加载时间
+    sep : str, optional
+        文本文件分隔符。默认 None = 自动嗅探（tab / 逗号 / 分号 / 竖线）
     refresh : bool, default False
         True = 强制重新转换（源文件更新后使用）
-    to_pandas : bool, default False
-        True = 返回 pandas DataFrame（方便与 tablegis 其他函数衔接）
-        False = 返回 polars DataFrame（更快更省内存）
+    to_pandas : bool, default True
+        True 返回 pandas DataFrame；False 返回 polars DataFrame（更快更省内存）
+    cache : bool, default True
+        True = 使用 Parquet 缓存（重复读取极快）
+        False = 一次性读取，不在磁盘留任何缓存文件
 
     Returns
     -------
-    polars.DataFrame or pandas.DataFrame
-        当指定 sheet 时，返回单个 DataFrame
-        当 sheet=None 时，返回 dict: {sheet名: DataFrame}
-
-    Raises
-    ------
-    FileNotFoundError
-        文件不存在或 sheet 不存在
+    pandas.DataFrame or polars.DataFrame
+        sheet 指定时返回单个 DataFrame；sheet=None 时返回 dict {sheet名: DataFrame}
 
     Examples
     --------
     >>> import tablegis as tg
-    >>> # 读取指定sheet（只转换这一个，首次约5秒）
-    >>> df = tg.fast_read("data.xlsx", sheet="站点信息")
-    >>> # 再次读取同一sheet（缓存加载，0.02秒）
-    >>> df = tg.fast_read("data.xlsx", sheet="站点信息")
-    >>> # 只加载几列（更快更省内存）
-    >>> df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市","经度","纬度"])
-    >>> # 返回 pandas DataFrame（与 tablegis 其他函数衔接）
-    >>> pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
-    >>> # 读取全部sheet
-    >>> data = tg.fast_read("data.xlsx")
-    >>> # 读取CSV
+    >>> # Excel 指定 sheet（首次转换，之后走缓存）
+    >>> df = tg.fast_read("工参.xlsx", sheet="小区明细")
+    >>> # 一次性读取，不落缓存
+    >>> df = tg.fast_read("工参.xlsx", sheet="小区明细", cache=False)
+    >>> # CSV / TXT，自动识别分隔符和编码
     >>> df = tg.fast_read("data.csv")
-    >>> # 源文件更新了，强制刷新缓存
-    >>> df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)
-
-    Notes
-    -----
-    性能对比（290万行10个sheet的Excel文件）：
-    - pandas + openpyxl: 单sheet 244秒，全量 ~40分钟
-    - 本函数首次（含转换）: 单sheet ~5秒，全量 ~2.5分钟
-    - 本函数缓存加载: 单sheet 0.02秒，全量 0.12秒
-    - 内存占用: pandas 238MB(单sheet) → Parquet缓存 82MB(全量)
+    >>> df = tg.fast_read("data.txt", sep="\\t")
+    >>> # 只取几列（更快更省内存）
+    >>> df = tg.fast_read("工参.xlsx", columns=["城市", "经度", "纬度"])
+    >>> # 读取全部 sheet
+    >>> data = tg.fast_read("工参.xlsx", sheet=None)
+    >>> # 源文件更新后强制刷新缓存
+    >>> df = tg.fast_read("工参.xlsx", sheet="小区明细", refresh=True)
     """
     path = Path(file)
-
     if not path.exists():
         raise FileNotFoundError(f"文件不存在: {path}")
 
-    # ---- CSV: 直接读 ----
-    if path.suffix.lower() == ".csv":
-        result = pl.read_csv(str(path), columns=columns, ignore_errors=True)
-        return result.to_pandas() if to_pandas else result
+    suffix = path.suffix.lower()
 
-    # ---- Excel + 指定sheet: 只转换这一个 ----
-    if sheet:
-        cache = _ensure_sheet(path, sheet, force=refresh)
-        p = cache / f"{sheet}.parquet"
-        if not p.exists():
-            raise FileNotFoundError(f"sheet '{sheet}' 转换失败或不存在")
-        result = pl.read_parquet(str(p), columns=columns)
-        return result.to_pandas() if to_pandas else result
+    # ---- 文本表格：csv / txt / tsv / dat ----
+    if suffix in TEXT_SUFFIXES:
+        df = _read_text_table(path, sep=sep, columns=columns)
+        return df.to_pandas() if to_pandas else df
 
-    # ---- Excel + 全部sheet ----
-    cache = _ensure_all(path, force=refresh)
-    meta = _load_meta(cache)
-    raw = {
-        name: pl.read_parquet(str(cache / f"{name}.parquet"), columns=columns)
-        for name in meta.get("sheets", {})
-        if (cache / f"{name}.parquet").exists()
-    }
-    if to_pandas:
-        return {name: df.to_pandas() for name, df in raw.items()}
-    return raw
+    if suffix not in EXCEL_SUFFIXES:
+        raise ValueError(
+            f"不支持的文件类型: {suffix or '(无扩展名)'}，"
+            f"支持 Excel {sorted(EXCEL_SUFFIXES)} 和文本 {sorted(TEXT_SUFFIXES)}")
+
+    names, sel = _pick_sheets(path, sheet)
+
+    # ---- 不缓存：一次性读取 ----
+    if not cache:
+        if sheet is None:
+            out = {n: _read_sheet_once(path, n, columns) for n in sel}
+            return {k: v.to_pandas() for k, v in out.items()} if to_pandas else out
+        df = _read_sheet_once(path, sel[0], columns)
+        return df.to_pandas() if to_pandas else df
+
+    # ---- 走 Parquet 缓存 ----
+    if sheet is None:
+        cdir = _ensure_all(path, force=refresh)
+        meta = _load_meta(cdir)
+        raw = {
+            n: pl.read_parquet(str(cdir / f"{n}.parquet"), columns=columns)
+            for n in sel
+            if (cdir / f"{n}.parquet").exists() and n in meta.get("sheets", {})
+        }
+        if to_pandas:
+            return {n: d.to_pandas() for n, d in raw.items()}
+        return raw
+
+    name = sel[0]
+    cdir = _ensure_sheet(path, name, force=refresh)
+    p = cdir / f"{name}.parquet"
+    if not p.exists():
+        raise FileNotFoundError(f"sheet '{name}' 转换失败或不存在")
+    result = pl.read_parquet(str(p), columns=columns)
+    return result.to_pandas() if to_pandas else result

@@ -466,23 +466,27 @@ Read large Excel files (hundreds of MB, millions of rows) 10-50x faster than `pa
 ```python
 import tablegis as tg
 
-# Read a single sheet (only this sheet is converted, ~5s for first time)
+# Read a single sheet (pandas DataFrame by default)
 df = tg.fast_read("data.xlsx", sheet="站点信息")
 
-# Read again — cached, near-instant (~0.02s)
+# Read again — served from Parquet cache (~1s for 500k x 59)
 df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# One-shot read, nothing written to disk (same as tg.read_xlsx)
+df = tg.fast_read("data.xlsx", sheet="站点信息", cache=False)
 
 # Read only specific columns (faster, less memory)
 df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市", "经度", "纬度"])
 
-# Return pandas DataFrame (compatible with other tablegis functions)
-pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
+# CSV / TXT — encoding (UTF-8/GBK) and separator are auto-detected
+df = tg.fast_read("data.csv")
+df = tg.fast_read("data.txt", sep="\t")
+
+# polars DataFrame instead of pandas
+df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=False)
 
 # Read all sheets (returns a dict: {sheet_name: DataFrame})
-data = tg.fast_read("data.xlsx")
-
-# Read CSV (no caching needed — Polars reads CSV natively and fast)
-df = tg.fast_read("data.csv")
+data = tg.fast_read("data.xlsx", sheet=None)
 
 # Force refresh cache (after source file is updated)
 df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)

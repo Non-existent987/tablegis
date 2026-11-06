@@ -460,30 +460,34 @@ print(gdf)
 
 ### 12、快速读取 — 大型Excel/CSV文件高速读取（Parquet缓存加速）
 
-读取大型Excel文件（数百MB、数百万行）比 `pandas.read_excel` 快 10-50 倍。底层使用 Polars + Calamine（Rust引擎）解析，首次读取后自动缓存为 Parquet 列式格式，后续加载接近瞬时完成。**指定sheet时只转换该sheet，不会转换其他sheet**。
+统一入口，支持 `.xlsx / .xlsb / .xls / .ods / .csv / .txt / .tsv / .dat`。Excel 第一个 sheet 由内置 C++ 引擎解析（比 `pandas.read_excel` 快 1-2 个数量级）；`cache=True`（默认）时落地 Parquet 缓存，50万行×59列重复读取约 1 秒。**指定 sheet 时只转换该 sheet，不会碰其他 sheet**。
 
 #### 基本用法
 
 ```python
 import tablegis as tg
 
-# 读取单个sheet（只转换这一个，首次约5秒）
+# 读取单个sheet（默认返回 pandas DataFrame）
 df = tg.fast_read("data.xlsx", sheet="站点信息")
 
-# 再次读取同一sheet（走缓存，约0.02秒）
+# 再次读取同一sheet（走 Parquet 缓存，约1秒/50万行）
 df = tg.fast_read("data.xlsx", sheet="站点信息")
+
+# 一次性读取，不在磁盘留任何缓存文件（等价 tg.read_xlsx）
+df = tg.fast_read("data.xlsx", sheet="站点信息", cache=False)
 
 # 只读取指定列（更快更省内存）
 df = tg.fast_read("data.xlsx", sheet="站点信息", columns=["城市", "经度", "纬度"])
 
-# 返回 pandas DataFrame（与 tablegis 其他函数衔接）
-pd_df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=True)
+# CSV / TXT：编码（UTF-8/GBK）和分隔符自动识别
+df = tg.fast_read("data.csv")
+df = tg.fast_read("data.txt", sep="\t")
+
+# 返回 polars DataFrame
+df = tg.fast_read("data.xlsx", sheet="站点信息", to_pandas=False)
 
 # 读取全部sheet（返回字典: {sheet名: DataFrame}）
-data = tg.fast_read("data.xlsx")
-
-# 读取CSV（Polars原生读取，本身就够快，不需要缓存）
-df = tg.fast_read("data.csv")
+data = tg.fast_read("data.xlsx", sheet=None)
 
 # 源文件更新后，强制刷新缓存
 df = tg.fast_read("data.xlsx", sheet="站点信息", refresh=True)

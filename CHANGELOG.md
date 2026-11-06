@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.19] - 2026-11-06
+### Changed (breaking)
+- `fast_read` is now the single unified reader: Excel (`.xlsx/.xlsb/.xls/.ods`) plus text tables (`.csv/.txt/.tsv/.dat/.psv`) with auto encoding (UTF-8/GBK) and auto separator detection (`sep=` to override, e.g. `sep="\t"`).
+- `fast_read` defaults changed to `sheet=0`, `to_pandas=True`, `cache=True` (previously `sheet=None`, `to_pandas=False`). Pass `sheet=None` for all sheets, `to_pandas=False` for polars.
+- New `cache=False`: one-shot read with no files written to disk.
+- `read_xlsx(file, sheet, columns)` is now a thin alias of `fast_read(..., cache=False)` — same speed, identical output.
+- Parquet cache compression switched zstd → lz4 and MD5 is computed once per call: cold conversion on a 165MB / 500k-row file drops 57s → 17s.
+- Cached conversion of the first sheet now uses the native C++ engine instead of Calamine.
+- `_cast_types`: empty strings and Excel error tokens (`#N/A`, `#DIV/0!`, ...) count as missing when measuring the conversion failure rate — a numeric column with sparse empty cells now correctly stays numeric instead of degrading to text.
+- Sheet lookup goes through `read_xlsx_sheetnames` (stdlib zip read) instead of opening the whole workbook with Calamine.
+
+### Fixed
+- Cached and one-shot paths returned different dtypes for the same file (e.g. `挂高`, `方位角` were `str` from cache but `float64` when read in one shot). Both paths now produce identical columns, dtypes and values.
+
 ## [0.0.18] - 2026-11-06
 ### Fixed
 - `read_xlsx` no longer crashes on Excel error cells (`#N/A`, `#DIV/0!`, ...) mixed into numeric columns. CSV/Excel reads now fall back to all-string parsing + smart type casting: sparse error tokens become null and the column stays numeric; text-heavy columns stay text. Applies to native-extension, exe and calamine backends.
