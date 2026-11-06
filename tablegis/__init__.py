@@ -13,7 +13,7 @@ from .core import (min_distance_onetable,
                    match_layer,
                    df_to_gdf,
                    buffer,)
-from .fast_read import fast_read, xlsx2csv, read_xlsx
+from .fast_read import fast_read, xlsx2csv, read_xlsx, read_xlsx_sheetnames
 
 __all__ = [
     "min_distance_onetable",
@@ -32,6 +32,7 @@ __all__ = [
     "fast_read",
     "xlsx2csv",
     "read_xlsx",
+    "read_xlsx_sheetnames",
 ]
 def wav_file():
     import base64

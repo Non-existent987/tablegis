@@ -245,6 +245,32 @@ def _pick_sheets(xlsx_path, sheet):
     return names, [sheet]
 
 
+def read_xlsx_sheetnames(file_path):
+    """仅适用于 .xlsx 文件，快速提取 sheet 名称列表（毫秒级，纯标准库）
+
+    直接解压读 xl/workbook.xml，不解析任何单元格数据，
+    不依赖 calamine/polars，适合超大文件的 sheet 探测。
+
+    Parameters
+    ----------
+    file_path : str or Path
+        .xlsx 文件路径。
+
+    Returns
+    -------
+    list[str]
+        按工作簿顺序排列的 sheet 名称列表。
+    """
+    import zipfile
+    import re
+    import html
+
+    with zipfile.ZipFile(file_path, 'r') as z:
+        xml_content = z.read('xl/workbook.xml').decode('utf-8')
+    names = re.findall(r'<sheet[^>]*?name="([^"]+)"', xml_content)
+    return [html.unescape(name) for name in names]
+
+
 def read_xlsx(file, sheet=0, columns=None):
     """快速读取 xlsx 为 pandas DataFrame（calamine 引擎，无缓存，一次性读取）
 

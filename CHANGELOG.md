@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.17] - 2026-11-06
+### Added
+- `read_xlsx_sheetnames(file)`: instant sheet-name extraction for .xlsx files. Pure stdlib (zipfile + regex on xl/workbook.xml), no cell parsing, no calamine/polars dependency — millisecond-level even on huge workbooks.
+
 ## [Unreleased]
 ### Added
 - Native C++ extension `tablegis._xlsx2csv` (0.0.16): pybind11 module vendoring libdeflate, in-process multithreaded XML scan. Prebuilt wheels for Windows/Linux/macOS (cp39-cp313) via cibuildwheel + scikit-build-core. First-sheet xlsx→CSV of a 165MB / 500k-row file: ~2-6s on all three platforms.

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "tablegis"
-version = "0.0.16"
+version = "0.0.17"
 keywords = [
     "gis", "tablegeo", "pandas", "geopandas",
     "shapefile", "Nearest", "crs", "fast-read", "polars", "parquet"
